@@ -28,6 +28,8 @@ export function LinkPanel({ link, result, onClose, onDelete, onReport, onFocus, 
   const body = useRef<HTMLDivElement>(null);
   // Each tab opens from the top, not at the scroll position of the previous tab.
   useLayoutEffect(() => { if (body.current) body.current.scrollTop = 0; }, [tab, link.id]);
+  // The first-steps guide follows which tabs have been opened.
+  useEffect(() => { window.dispatchEvent(new CustomEvent('oir:link-tab', { detail: tab })); }, [tab, link.id]);
   const A = sites.find((s) => s.id === link.siteA), B = sites.find((s) => s.id === link.siteB);
   const set = (patch: Partial<Link>) => updateLink({ ...link, ...patch });
   const tabs: [Tab, string][] = [['result', 'Итог'], ['input', 'Исходные данные'], ['profile', 'Профиль'], ['detail', 'Подробно']];
@@ -41,12 +43,12 @@ export function LinkPanel({ link, result, onClose, onDelete, onReport, onFocus, 
             <h2>{A?.name ?? '?'} — {B?.name ?? '?'}</h2>
           </div>
           <button className="btn sm" type="button" onClick={onFocus} title="Показать на карте"><Icon name="target" /></button>
-          <button className="btn sm" type="button" onClick={onReport} disabled={!result?.ok}><Icon name="pdf" />PDF</button>
+          <button className="btn sm" data-guide="pdf" type="button" onClick={onReport} disabled={!result?.ok}><Icon name="pdf" />PDF</button>
           <button className="btn sm danger" type="button" onClick={onDelete} title="Удалить пролёт"><Icon name="trash" /></button>
           <button className="btn sm ghost" type="button" onClick={onClose} title="Закрыть"><Icon name="close" /></button>
         </div>
         <div className="tabs" role="tablist">
-          {tabs.map(([k, t]) => <button key={k} role="tab" type="button" aria-selected={tab === k} onClick={() => setTab(k)}>{t}</button>)}
+          {tabs.map(([k, t]) => <button key={k} role="tab" data-guide={'ltab-' + k} type="button" aria-selected={tab === k} onClick={() => setTab(k)}>{t}</button>)}
         </div>
       </div>
       <div className="panel-body" ref={body}>

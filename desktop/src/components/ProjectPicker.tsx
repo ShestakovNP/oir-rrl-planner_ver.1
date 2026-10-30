@@ -83,7 +83,7 @@ export function ProjectPicker({ onNewProject, onCleanup, onDeleteOne }: { onNewP
 
   return (
     <div className="pp" ref={ref}>
-      <button type="button" className={`pp-field ${open ? 'open' : ''}`} aria-haspopup="listbox" aria-expanded={open} aria-label="Текущий проект"
+      <button type="button" data-guide="project" className={`pp-field ${open ? 'open' : ''}`} aria-haspopup="listbox" aria-expanded={open} aria-label="Текущий проект"
         onClick={() => (open ? close() : setOpen(true))} onKeyDown={(e) => { if (!open && (e.key === 'ArrowDown' || e.key === 'Enter')) { e.preventDefault(); setOpen(true); } }}>
         {project && isFav(project.id) ? <Icon name="star" className="icon pp-field-star" /> : null}
         <span className="pp-field-name">{project?.name ?? (projects.length ? 'Выберите проект' : 'Нет проектов')}</span>

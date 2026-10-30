@@ -8,7 +8,7 @@ import { useStore, type Theme } from '../state/store';
 import { Icon, useDismiss } from './ui';
 
 export type FileAction =
-  | 'export-project' | 'import' | 'export-csv' | 'import-csv' | 'report-project' | 'backup' | 'about' | 'clear-tiles';
+  | 'export-project' | 'import' | 'export-csv' | 'import-csv' | 'report-project' | 'backup' | 'about' | 'clear-tiles' | 'guide';
 
 interface Props {
   onPlace(p: Place): void;
@@ -99,6 +99,7 @@ export function TopBar({ onPlace, onAction }: Props) {
             ))}
             <hr />
             <button role="menuitem" type="button" onClick={() => act('clear-tiles')}>Очистить кэш карты</button>
+            <button role="menuitem" type="button" onClick={() => act('guide')}><Icon name="info" />Первые шаги (гид)</button>
             <button role="menuitem" type="button" onClick={() => act('about')}><Icon name="info" />О программе и данных</button>
           </div>
         ) : null}

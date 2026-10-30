@@ -27,6 +27,7 @@ interface Props {
   onDeleteProject(): void;
   onCleanupProjects(): void;
   onDeleteProjectById(id: string): Promise<void>;
+  onDeleteSite(id: string): Promise<void>;
   onAddRadio(): void;
   onAddAntenna(): void;
 }
@@ -35,6 +36,7 @@ export function Sidebar(p: Props) {
   const { projects, project, sites, links, results, library } = useStore();
   const [q, setQ] = useState('');
   const [menu, setMenu] = useState<'project' | 'site' | null>(null);
+  const [askDel, setAskDel] = useState<string | null>(null);
   const close = useCallback(() => setMenu(null), []);
   const projRef = useDismiss(menu === 'project', close);
   const siteRef = useDismiss(menu === 'site', close);
@@ -64,8 +66,8 @@ export function Sidebar(p: Props) {
         </div>
       </div>
       <div className="tabs" role="tablist">
-        <button role="tab" type="button" aria-selected={p.tab === 'sites'} onClick={() => p.setTab('sites')}>Объекты <span className="count">{sites.length}</span></button>
-        <button role="tab" type="button" aria-selected={p.tab === 'links'} onClick={() => p.setTab('links')}>Пролёты <span className="count">{links.length}</span></button>
+        <button role="tab" data-guide="tab-sites" type="button" aria-selected={p.tab === 'sites'} onClick={() => p.setTab('sites')}>Объекты <span className="count">{sites.length}</span></button>
+        <button role="tab" data-guide="tab-links" type="button" aria-selected={p.tab === 'links'} onClick={() => p.setTab('links')}>Пролёты <span className="count">{links.length}</span></button>
         <button role="tab" type="button" aria-selected={p.tab === 'equipment'} onClick={() => p.setTab('equipment')}>Справочник</button>
       </div>
       {p.tab !== 'equipment' ? (
@@ -73,7 +75,7 @@ export function Sidebar(p: Props) {
           <input className="input" placeholder={p.tab === 'sites' ? 'Найти объект' : 'Найти пролёт'} aria-label="Фильтр списка" value={q} onChange={(e) => setQ(e.target.value)} />
           {p.tab === 'sites' ? (
             <div className="menu-wrap" ref={siteRef}>
-              <button type="button" className="btn primary" disabled={!project} onClick={() => setMenu(menu === 'site' ? null : 'site')} aria-expanded={menu === 'site'}><Icon name="plus" />Объект</button>
+              <button type="button" data-guide="add-site" className="btn primary" disabled={!project} onClick={() => setMenu(menu === 'site' ? null : 'site')} aria-expanded={menu === 'site'}><Icon name="plus" />Объект</button>
               {menu === 'site' ? (
                 <div className="menu" role="menu">
                   <button role="menuitem" type="button" onClick={() => { close(); p.onAddSiteMap(); }}><Icon name="pin" />Поставить на карте</button>
@@ -82,7 +84,7 @@ export function Sidebar(p: Props) {
               ) : null}
             </div>
           ) : (
-            <button type="button" className="btn primary" disabled={sites.length < 2} onClick={p.onAddLink}><Icon name="plus" />Пролёт</button>
+            <button type="button" data-guide="add-link" className="btn primary" disabled={sites.length < 2} onClick={p.onAddLink}><Icon name="plus" />Пролёт</button>
           )}
         </div>
       ) : null}
@@ -90,14 +92,30 @@ export function Sidebar(p: Props) {
         {!project && p.tab !== 'equipment' ? (
           <div className="empty"><b>Нет проекта</b><span>Создайте проект, чтобы добавлять объекты и пролёты.</span><button type="button" className="btn primary" onClick={p.onNewProject}>Создать проект</button></div>
         ) : p.tab === 'sites' ? (
-          fSites.length ? fSites.map((s) => (
-            <button key={s.id} type="button" className="item" aria-current={p.selection?.kind === 'site' && p.selection.id === s.id} onClick={() => p.select({ kind: 'site', id: s.id })}>
-              <span className="dot site" />
-              <span className="t">{s.name || 'Без названия'}</span>
-              <span className="r">{s.code}</span>
-              <span className="s">{fmt(s.lat, 5)}, {fmt(s.lon, 5)}</span>
-            </button>
-          )) : <div className="empty"><b>{q ? 'Ничего не найдено' : 'Объектов пока нет'}</b>{q ? null : <span>Нажмите «Объект» и кликните по карте или введите координаты. Объекты можно загрузить из CSV через меню «Файл».</span>}</div>
+          fSites.length ? fSites.map((s) => {
+            const nLinks = links.filter((l) => l.siteA === s.id || l.siteB === s.id).length;
+            if (askDel === s.id)
+              return (
+                <div key={s.id} className="item-ask" role="alert">
+                  <div>Удалить объект «{s.name || 'Без названия'}»?{nLinks ? <small> Вместе с ним удалятся пролёты: {nLinks}.</small> : null}</div>
+                  <div className="item-ask-btns">
+                    <button type="button" className="btn sm danger-fill" autoFocus onClick={() => { setAskDel(null); void p.onDeleteSite(s.id); }}>Удалить</button>
+                    <button type="button" className="btn sm" onClick={() => setAskDel(null)}>Нет</button>
+                  </div>
+                </div>
+              );
+            return (
+              <div key={s.id} className="item-wrap">
+                <button type="button" className="item" aria-current={p.selection?.kind === 'site' && p.selection.id === s.id} onClick={() => p.select({ kind: 'site', id: s.id })}>
+                  <span className="dot site" />
+                  <span className="t">{s.name || 'Без названия'}</span>
+                  <span className="r">{s.code}</span>
+                  <span className="s">{fmt(s.lat, 5)}, {fmt(s.lon, 5)}</span>
+                </button>
+                <button type="button" className="item-del" title="Удалить объект" aria-label={`Удалить объект ${s.name}`} onClick={() => setAskDel(s.id)}><Icon name="trash" /></button>
+              </div>
+            );
+          }) : <div className="empty"><b>{q ? 'Ничего не найдено' : 'Объектов пока нет'}</b>{q ? null : <span>Нажмите «Объект» и кликните по карте или введите координаты. Объекты можно загрузить из CSV через меню «Файл».</span>}</div>
         ) : p.tab === 'links' ? (
           fLinks.length ? fLinks.map((l) => {
             const r = results.get(l.id);

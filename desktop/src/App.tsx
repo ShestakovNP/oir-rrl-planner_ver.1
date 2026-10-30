@@ -4,6 +4,7 @@ import { useStore } from './state/store';
 import { vincenty } from './data/calc/geo';
 import { MapView, type FocusRequest, type MapLink, type MapMode } from './map/MapView';
 import { TopBar, type FileAction } from './components/TopBar';
+import { Guide } from './components/Guide';
 import { Sidebar, type ListTab, type Selection } from './components/Sidebar';
 import { LinkPanel } from './components/LinkPanel';
 import { SitePanel } from './components/SitePanel';
@@ -172,6 +173,7 @@ export function App() {
   const onAction = async (a: FileAction) => {
     try {
       if (a === 'about') return setModal({ kind: 'about' });
+      if (a === 'guide') return store.setSetting('guideDone', false);
       if (a === 'clear-tiles') return setDialog({ title: 'Очистить кэш карты?', body: 'Загруженные ранее фрагменты карты удалятся. Без интернета карта будет пустой, пока вы снова не посмотрите эти места.', confirm: 'Очистить', danger: true, onConfirm: () => { void clearTileCache().then(() => notify('Кэш карты очищен.')); } });
       if (a === 'backup') {
         const b = await makeBackup(store.repo);
@@ -235,6 +237,8 @@ export function App() {
           onOpenLink={(id) => { setTab('links'); setSel({ kind: 'link', id }); }}
           onStartLink={() => setModal({ kind: 'new-link', a: s.id })}
           onMove={() => { startMove(s.id); focusOn([[s.lat, s.lon]]); }}
+          onAddSiteMap={() => { setMode('add-site'); setSel(null); }}
+          onAddSiteCoords={() => setModal({ kind: 'add-site' })}
           onDelete={() => confirmDelete('Удалить объект?', n ? `Вместе с объектом «${s.name}» удалятся пролёты: ${n}.` : `Объект «${s.name}» будет удалён.`, async () => { await store.deleteSite(s.id); setSel(null); })}
         />
       );
@@ -247,6 +251,7 @@ export function App() {
     if (an) panel = <AntennaPanel key={an.id} ant={an} onClose={() => setSel(null)} onDelete={() => confirmDelete('Удалить антенну из справочника?', 'Уже настроенные пролёты не изменятся.', async () => { store.saveLibrary({ ...library, antennas: library.antennas.filter((x) => x.id !== an.id) }); setSel(null); })} />;
   }
 
+  const newProject = () => setDialog({ title: 'Новый проект', input: { label: 'Название проекта', value: '' }, confirm: 'Создать', onConfirm: (v) => { void store.createProject(v!).then(() => notify('Проект создан.')).catch(fail); } });
   const selSiteId = sel?.kind === 'site' ? sel.id : null;
   const selLinkId = sel?.kind === 'link' ? sel.id : null;
 
@@ -259,9 +264,10 @@ export function App() {
           onAddSiteMap={() => { setMode('add-site'); setSel(null); }}
           onAddSiteCoords={() => setModal({ kind: 'add-site' })}
           onAddLink={() => setModal({ kind: 'new-link' })}
-          onNewProject={() => setDialog({ title: 'Новый проект', input: { label: 'Название проекта', value: '' }, confirm: 'Создать', onConfirm: (v) => { void store.createProject(v!).then(() => notify('Проект создан.')).catch(fail); } })}
+          onNewProject={newProject}
           onRenameProject={() => project && setDialog({ title: 'Переименовать проект', input: { label: 'Название проекта', value: project.name }, confirm: 'Сохранить', onConfirm: (v) => { void store.updateProject({ ...project, name: v! }); } })}
           onCleanupProjects={() => setModal({ kind: 'cleanup' })}
+          onDeleteSite={async (id) => { const st = sites.find((x) => x.id === id); try { await store.deleteSite(id); if (sel?.kind === 'site' && sel.id === id) setSel(null); notify(`Объект «${st?.name ?? ''}» удалён.`); } catch (e) { fail(e); } }}
           onDeleteProjectById={async (id) => { const pr = store.projects.find((x) => x.id === id); try { await store.deleteProject(id); if (id === project?.id) setSel(null); notify(`Проект «${pr?.name ?? ''}» удалён.`); } catch (e) { fail(e); } }}
           onDeleteProject={() => project && confirmDelete('Удалить проект?', `Проект «${project.name}» удалится вместе со всеми объектами (${sites.length}) и пролётами (${links.length}). Перед удалением можно сохранить его через «Файл» → «Экспорт проекта».`, async () => { await store.deleteProject(project.id); notify('Проект удалён.'); })}
           onAddRadio={() => { const r = { id: uid(), name: 'Новое ППУ', band: '', modes: [], notes: '' }; store.saveLibrary({ ...library, radios: [...library.radios, r] }); setSel({ kind: 'radio', id: r.id }); }}
@@ -299,6 +305,17 @@ export function App() {
               </div>
             ) : null}
           </div>
+          {!settings.guideDone ? (
+            <Guide
+              linkOpen={sel?.kind === 'link'} sidebarTab={tab}
+              onClose={() => store.setSetting('guideDone', true)}
+              onNewProject={newProject}
+              onAddSiteMap={() => { setTab('sites'); setMode('add-site'); setSel(null); }}
+              onAddSiteCoords={() => { setTab('sites'); setModal({ kind: 'add-site' }); }}
+              onAddLink={() => { setTab('links'); setModal({ kind: 'new-link', a: sel?.kind === 'site' ? sel.id : undefined }); }}
+              onOpenLink={() => { const l = links[0]; if (l) { setTab('links'); setSel({ kind: 'link', id: l.id }); } }}
+            />
+          ) : null}
           {net !== 'online' ? <div className="floating offline-banner" role="status">{net === 'offline' ? 'Нет интернета. Видны только уже загруженные участки карты; расчёты, данные и отчёты работают.' : 'Сеть работает с перебоями: часть карты может не загрузиться.'}</div> : null}
         </div>
         {panel}

@@ -32,17 +32,15 @@ export function AddSiteDialog({ onClose, onCreate, initial }: { onClose(): void;
   const [code, setCode] = useState('');
   const [lat, setLat] = useState(initial ? initial.lat.toFixed(6) : '');
   const [lon, setLon] = useState(initial ? initial.lon.toFixed(6) : '');
-  const [g, setG] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => ref.current?.focus(), []);
   const submit = () => {
-    const la = parseCoord(lat), lo = parseCoord(lon), gr = g.trim() ? parseNum(g) : null;
+    const la = parseCoord(lat), lo = parseCoord(lon);
     if (!name.trim()) return setErr('Укажите название объекта.');
     if (!Number.isFinite(la) || Math.abs(la) > 90) return setErr('Широта должна быть от −90 до 90.');
     if (!Number.isFinite(lo) || Math.abs(lo) > 180) return setErr('Долгота должна быть от −180 до 180.');
-    if (gr != null && !Number.isFinite(gr)) return setErr('Высота земли должна быть числом или пустой.');
-    onCreate({ name: name.trim(), code: code.trim(), lat: la, lon: lo, groundM: gr });
+    onCreate({ name: name.trim(), code: code.trim(), lat: la, lon: lo, groundM: null });
   };
   return (
     <Modal title="Новый объект" onClose={onClose} onSubmit={submit} submit="Добавить">
@@ -50,8 +48,7 @@ export function AddSiteDialog({ onClose, onCreate, initial }: { onClose(): void;
         <Field label="Название" htmlFor="ns-name" className="span2"><input id="ns-name" ref={ref} className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="например, Шегарка" /></Field>
         <Field label="Широта" htmlFor="ns-lat"><input id="ns-lat" className="input num" value={lat} onChange={(e) => setLat(e.target.value)} placeholder={`56°33'50.19" или 56.5639`} /></Field>
         <Field label="Долгота" htmlFor="ns-lon"><input id="ns-lon" className="input num" value={lon} onChange={(e) => setLon(e.target.value)} placeholder={`84°04'43.34" или 84.0787`} /></Field>
-        <Field label="Номер БС / код" htmlFor="ns-code"><input id="ns-code" className="input" value={code} onChange={(e) => setCode(e.target.value)} placeholder="необязательно" /></Field>
-        <Field label="Высота земли, м" htmlFor="ns-g" hint="подтянется из профиля SRTM"><input id="ns-g" className="input num" value={g} onChange={(e) => setG(e.target.value)} placeholder="необязательно" /></Field>
+        <Field label="Номер БС / код" htmlFor="ns-code" className="span2"><input id="ns-code" className="input" value={code} onChange={(e) => setCode(e.target.value)} placeholder="необязательно" /></Field>
       </div>
       {err ? <div className="notice">{err}</div> : null}
     </Modal>
@@ -59,16 +56,25 @@ export function AddSiteDialog({ onClose, onCreate, initial }: { onClose(): void;
 }
 
 export function NewLinkDialog({ onClose, onCreate, onPickOnMap, initialA }: { onClose(): void; onCreate(a: string, b: string): void; onPickOnMap(): void; initialA?: string }) {
-  const { sites } = useStore();
+  const { sites, links } = useStore();
   const sorted = [...sites].sort((x, y) => x.name.localeCompare(y.name, 'ru'));
+  const linked = (x: string, y: string) => links.some((l) => (l.siteA === x && l.siteB === y) || (l.siteA === y && l.siteB === x));
+  // Default B: an object not yet linked with A, so a third object pairs with an existing one in one click.
+  const firstFree = (x: string) => sorted.find((s) => s.id !== x && !linked(x, s.id))?.id ?? sorted.find((s) => s.id !== x)?.id ?? '';
   const [a, setA] = useState(initialA ?? sorted[0]?.id ?? '');
-  const [b, setB] = useState(sorted.find((s) => s.id !== (initialA ?? sorted[0]?.id))?.id ?? '');
+  const [b, setB] = useState(() => firstFree(initialA ?? sorted[0]?.id ?? ''));
   const [err, setErr] = useState<string | null>(null);
+  const changeA = (v: string) => { setA(v); setErr(null); if (v === b || linked(v, b)) setB(firstFree(v)); };
+  const submit = () => {
+    if (!a || !b || a === b) return setErr('Выберите два разных объекта.');
+    if (linked(a, b)) return setErr('Пролёт между этими объектами уже есть — выберите другой объект B.');
+    onCreate(a, b);
+  };
   return (
-    <Modal title="Новый пролёт" onClose={onClose} onSubmit={() => (a && b && a !== b ? onCreate(a, b) : setErr('Выберите два разных объекта.'))} submit="Создать">
+    <Modal title="Новый пролёт" onClose={onClose} onSubmit={submit} submit="Создать">
       <div className="grid2">
-        <Field label="Объект A" htmlFor="nl-a"><select id="nl-a" className="select" value={a} onChange={(e) => setA(e.target.value)}>{sorted.map((s) => <option key={s.id} value={s.id}>{s.name}{s.code ? ` (${s.code})` : ''}</option>)}</select></Field>
-        <Field label="Объект B" htmlFor="nl-b"><select id="nl-b" className="select" value={b} onChange={(e) => setB(e.target.value)}>{sorted.map((s) => <option key={s.id} value={s.id}>{s.name}{s.code ? ` (${s.code})` : ''}</option>)}</select></Field>
+        <Field label="Объект A" htmlFor="nl-a"><select id="nl-a" className="select" value={a} onChange={(e) => changeA(e.target.value)}>{sorted.map((s) => <option key={s.id} value={s.id}>{s.name}{s.code ? ` (${s.code})` : ''}</option>)}</select></Field>
+        <Field label="Объект B" htmlFor="nl-b"><select id="nl-b" className="select" value={b} onChange={(e) => { setB(e.target.value); setErr(null); }}>{sorted.filter((s) => s.id !== a).map((s) => <option key={s.id} value={s.id}>{s.name}{s.code ? ` (${s.code})` : ''}{linked(a, s.id) ? ' — пролёт уже есть' : ''}</option>)}</select></Field>
       </div>
       <p>Можно выбрать объекты прямо на карте: <button type="button" className="btn sm" onClick={onPickOnMap}>Выбрать на карте</button></p>
       <p className="hint">Если есть интернет, профиль рельефа загрузится автоматически.</p>

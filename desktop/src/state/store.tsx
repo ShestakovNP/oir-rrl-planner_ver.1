@@ -3,7 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { Library, Link, Project, Site } from '../data/types';
 import { openRepo, type Repo } from '../storage/repo';
 import { calculateLink, channelsShareFrequency, type LinkResult } from '../data/calc/link';
-import { baseLink, defaultLibrary, sampleProject } from '../data/samples';
+import { baseLink, defaultLibrary } from '../data/samples';
 import { uid } from '../data/ids';
 
 export type Theme = 'system' | 'light' | 'dark';
@@ -14,8 +14,10 @@ export interface Settings {
   lastProjectId: string | null;
   /** Pinned projects shown on top of the project list (up to 5). */
   favoriteProjects: string[];
+  /** The first-steps guide was finished or hidden. */
+  guideDone: boolean;
 }
-const DEFAULT_SETTINGS: Settings = { providerId: 'osm', theme: 'system', mapView: { center: [56.5, 84.9], zoom: 8 }, lastProjectId: null, favoriteProjects: [] };
+const DEFAULT_SETTINGS: Settings = { providerId: 'osm', theme: 'system', mapView: { center: [56.5, 84.9], zoom: 8 }, lastProjectId: null, favoriteProjects: [], guideDone: false };
 
 export interface Store {
   repo: Repo;
@@ -79,18 +81,12 @@ export function StoreProvider({ children, fallback }: { children: ReactNode; fal
   }, []);
 
   const bootstrap = useCallback(async (r: Repo) => {
-    let ps = await r.listProjects();
+    const ps = await r.listProjects();
     let lib = await r.getLibrary();
     const seeded = await r.getSetting<boolean>('seeded');
     if (!seeded) {
+      // First run starts with an empty project list; only the equipment library gets templates.
       if (!lib) { lib = defaultLibrary(); await r.saveLibrary(lib); }
-      if (!ps.length) {
-        const smp = sampleProject();
-        await r.saveProject(smp.project);
-        for (const s of smp.sites) await r.saveSite(s);
-        for (const l of smp.links) await r.saveLink(l);
-        ps = await r.listProjects();
-      }
       await r.setSetting('seeded', true);
     }
     // One-time cleanup: earlier versions pre-filled XPD = 30 dB everywhere. That value was a
