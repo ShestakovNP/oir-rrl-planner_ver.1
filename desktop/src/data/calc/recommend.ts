@@ -1,0 +1,140 @@
+/** Plain-language recommendations derived from a LinkResult. Texts use **bold** markers. */
+import { geometry, interpolate, type LinkResult, type Level } from './link';
+import { rainModel } from './physics';
+import { downtime, fmt, ghz } from './format';
+
+export interface Rec {
+  level: Level;
+  title: string;
+  text: string;
+}
+
+const order: Record<Level, number> = { bad: 0, warn: 1, ok: 2, info: 3 };
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+export function buildRecommendations(r: LinkResult): Rec[] {
+  const recs: Rec[] = [];
+  const { path: P, k, kMin, geom: G, geomMin: Gmin, siteA, siteB } = r;
+  const nameA = siteA.name || 'A', nameB = siteB.name || 'B';
+  const lowest = r.channels.reduce((a, b) => (b.fGHz < a.fGHz ? b : a));
+  const fRef = lowest.fGHz;
+
+  /* clearance */
+  const clearOk = (dA: number, dB: number) => {
+    const Q = { ...P, HA: P.HA + dA, HB: P.HB + dB };
+    const c1 = geometry(Q, k, fRef).crit, c2 = geometry(Q, kMin, fRef).crit;
+    return (!c1 || c1.rel >= 0.577) && (!c2 || c2.rel >= 0);
+  };
+  const fNote = r.multi ? ` Просвет проверен по нижней частоте (${ghz(lowest.ch.freqMHz)}): у неё зона Френеля шире.` : '';
+  if (!clearOk(0, 0)) {
+    let both: number | null = null, onlyA: number | null = null, onlyB: number | null = null;
+    for (let h = 1; h <= 80; h++) {
+      if (both == null && clearOk(h, h)) both = h;
+      if (onlyA == null && clearOk(h, 0)) onlyA = h;
+      if (onlyB == null && clearOk(0, h)) onlyB = h;
+      if (both != null && onlyA != null && onlyB != null) break;
+    }
+    const opts: string[] = [];
+    if (both != null) opts.push(`обе антенны на **${both} м** (до ${fmt(P.hA + both, 0)} и ${fmt(P.hB + both, 0)} м)`);
+    if (onlyA != null) opts.push(`только антенну на «${nameA}» на **${onlyA} м**`);
+    if (onlyB != null) opts.push(`только антенну на «${nameB}» на **${onlyB} м**`);
+    const why: string[] = [];
+    if (G.crit && G.crit.rel < 0.577) why.push(`Сейчас просвет ${Math.round(G.crit.rel * 100)}% зоны Френеля, а для открытой трассы нужно от 58%`);
+    if (Gmin.crit && Gmin.crit.rel < 0) why.push(`в плохую погоду (k = ${fmt(kMin, 2)}) препятствие перекрывает луч`);
+    recs.push({
+      level: G.crit && G.crit.rel < 0 ? 'bad' : 'warn',
+      title: 'Поднимите антенны',
+      text: `${why.join(', и ')}. ${opts.length ? 'Достаточно поднять ' + opts.join(', или ') + '.' : 'Подъём даже на 80 м не помогает: нужна другая трасса или промежуточная станция.'}${fNote}`
+    });
+  } else {
+    let low = 0;
+    for (let h = 1; h < Math.min(P.hA, P.hB) - 3; h++) {
+      if (clearOk(-h, -h)) low = h;
+      else break;
+    }
+    recs.push({
+      level: 'ok',
+      title: 'Просвета хватает',
+      text: 'Трасса открыта и в обычную, и в плохую погоду.' + (low >= 3 ? ` Есть запас по высоте: обе антенны можно опустить на **${low} м**. Это упрощает монтаж и снижает стоимость места на мачте.` : '') + fNote
+    });
+  }
+  if (G.crit) {
+    const cc = interpolate(P.pts, G.crit.d).c;
+    if (cc > 0)
+      recs.push({ level: 'info', title: 'Узкое место — лес или застройка', text: `На ${fmt(G.crit.d, 1)} км препятствие высотой ${fmt(cc, 0)} м над землёй. Деревья прирастают на 0,3–0,5 м в год, поэтому проверьте высоту при обследовании трассы и заложите 3–5 м запаса по высоте антенн.` });
+  }
+
+  /* two channels on one antenna */
+  if (r.multi) {
+    if (r.coChannel && r.samePol)
+      recs.push({ level: 'bad', title: 'Каналы глушат друг друга', text: 'Оба канала на одной частоте и в одной поляризации. Разнесите их по поляризациям (один горизонтальный, другой вертикальный) или по частоте.' });
+    else if (r.coChannel && r.xpd == null)
+      recs.push({ level: 'warn', title: 'Укажите развязку поляризаций антенн', text: 'Оба канала работают на одной частоте и отличаются только поляризацией. Друг от друга их отделяет развязка поляризаций антенны (XPD), поэтому без неё помеха между каналами не учитывается и запас получается завышенным. Возьмите XPD из паспорта антенны и введите во вкладке «Исходные данные».' });
+    else if (r.coChannel) {
+      const md = Math.max(0, ...r.channels.flatMap((c) => c.modes.map((m) => m.deg)));
+      recs.push({ level: 'warn', title: 'Каналы на одной частоте в разных поляризациях', text: `Друг от друга их отделяет только развязка поляризаций антенны, ${fmt(r.xpd ?? NaN, 0)} дБ. Из-за этого порог приёмника ухудшается до ${fmt(md, 1)} дБ (больше всего на высоких модуляциях); это уже учтено в запасе. В замирания и дождь развязка падает, поэтому включите на ППУ подавление кросс-поляризационной помехи (XPIC).` });
+    } else
+      recs.push({ level: 'ok', title: 'Каналы не мешают друг другу', text: `Каналы в разных частотных диапазонах${r.samePol ? '' : ' и на разных поляризациях'}. Антенна должна быть рассчитана на оба диапазона (${r.channels.map((c) => ghz(c.ch.freqMHz)).join(' и ')}), а потери на объединение уже учтены.${r.samePol ? ' Обычно каналы разводят по разным поляризациям: так легче их развязать.' : ''}` });
+  }
+
+  /* per channel */
+  const gain = (need: number) =>
+    need <= 2 ? 'Хватит небольшого улучшения: например, антенны на ступень больше на одном конце или меньших потерь в тракте.'
+      : need <= 6 ? 'Хватит антенны вдвое большего диаметра на одном конце (≈ +6 дБ) или более мощного передатчика.'
+      : need <= 12 ? 'Нужны антенны вдвое большего диаметра на обоих концах (≈ +12 дБ).'
+      : 'Только антеннами не добрать: нужен разнесённый приём (две антенны на мачте), более короткий пролёт или более низкая частота.';
+  let mpSaid = false, rainSaid = false;
+  r.channels.forEach((c) => {
+    const p0 = r.multi ? c.tag + ': ' : '';
+    if (c.best)
+      recs.push({
+        level: 'ok', title: `${p0}гарантированная скорость — ${c.best.name}, ${fmt(c.best.rateMbps, 1)} Мбит/с`,
+        text: `Для нормы нужен запас не меньше **${fmt(c.marginRequired, 1)} дБ**, на этом режиме он ${fmt(c.best.margin, 1)} дБ.` +
+          (c.top && c.top.rateMbps > c.best.rateMbps ? ` Включите адаптивную модуляцию (ACM): базовый режим ${c.best.name}, максимальный ${c.top.name}. В хорошую погоду канал даст до ${fmt(c.top.rateMbps, 1)} Мбит/с и при замираниях будет снижать скорость, а не обрываться.` : '')
+      });
+    if (c.next) {
+      const need = c.marginRequired - c.next.margin;
+      recs.push({
+        level: c.best ? 'info' : 'bad',
+        title: c.best ? `${p0}как получить ${c.next.name}, ${fmt(c.next.rateMbps, 1)} Мбит/с` : `${p0}норма не выполняется ни на одной скорости`,
+        text: `${c.best ? 'Не' : 'Даже на ' + c.next.name + ' не'} хватает **${fmt(need, 1)} дБ** запаса. ${gain(need)}`
+      });
+      if (!mpSaid && c.next.mpYear > c.next.rainYear * 3 && c.fGHz <= 13) {
+        mpSaid = true;
+        recs.push({ level: 'info', title: 'Перерывы в основном из-за многолучёвости', text: 'Дождь на этих частотах почти не мешает. Сильнее всего помогает разнесённый приём: вторая антенна на той же мачте на 10–15 м ниже.' });
+      }
+    }
+    const bm = c.best || c.ref;
+    if (!rainSaid && bm && bm.margin > 0 && bm.rainYear > bm.mpYear && c.fGHz >= 10) {
+      rainSaid = true;
+      const alt = rainModel(c.fGHz, P.D, r.climate.rainR001, c.pol === 'H' ? 'V' : 'H');
+      const otherU = bm.mpYear + alt.pFor(bm.margin);
+      recs.push({
+        level: 'info', title: `${p0}перерывы в основном из-за дождя`,
+        text: `На ${ghz(c.ch.freqMHz)} почти все перерывы дают ливни: ослабление в ливень на этом пролёте ${fmt(c.rain.A001, 1)} дБ.` +
+          (c.pol === 'H' ? ` На вертикальной поляризации перерывов было бы ≈ ${downtime(otherU)} в год вместо ${downtime(bm.u)}: в дождь она ослабевает меньше.` : '') +
+          ' Интенсивность дождя сильнее всего влияет на результат, поэтому сверьте её с климатической зоной района.'
+      });
+    }
+    const subBad = c.modes.filter((m) => m.margin > 0 && !m.subOk).map((m) => m.name);
+    if (subBad.length)
+      recs.push({ level: 'warn', title: `${p0}риск в плохую погоду`, text: `При сильной субрефракции (k = ${fmt(kMin, 2)}) препятствие отнимет ${fmt(c.diffMin - c.diff, 1)} дБ, и режимы ${subBad.join(', ')} могут пропадать на часы. Это не входит в расчёт неготовности. Помогает подъём антенн.` });
+    if (c.best && c.best.margin > 45)
+      recs.push({ level: 'info', title: `${p0}сигнала с большим избытком`, text: `Запас ${fmt(c.best.margin, 0)} дБ — больше, чем нужно. Снизьте мощность передатчика или включите ATPC: так меньше помех соседним линиям.` });
+    ([['A', c.ch.gainA, c.gAcalc, r.path, nameA], ['B', c.ch.gainB, c.gBcalc, r.path, nameB]] as const).forEach(([, gin, gc, , nm]) => {
+      if (gin != null && Number.isFinite(gc) && Math.abs(gin - gc) > 4)
+        recs.push({ level: 'warn', title: `${p0}проверьте коэффициент усиления антенны на «${nm}»`, text: `Антенна такого диаметра на ${ghz(c.ch.freqMHz)} обычно имеет КУ около **${fmt(gc, 1)} дБ**, а указано ${fmt(gin, 1)} дБ. Сверьтесь с паспортом: ошибка в КУ напрямую меняет запас.` });
+    });
+  });
+
+  if (r.geo) {
+    const lv = r.channels.filter((c) => c.ref).map((c) => `**${fmt(c.ref!.prx, 0)} дБм**${r.multi ? ' в ' + c.tag : ''}`).join(', ');
+    recs.push({
+      level: 'info', title: 'Как навести антенны',
+      text: `На «${nameA}»: азимут **${fmt(r.geo.az1, 1)}°**, угол места ${fmt(r.tiltA, 2)}°. На «${nameB}»: азимут **${fmt(r.geo.az2, 1)}°**, угол места ${fmt(r.tiltB, 2)}°. Сначала наведите грубо по компасу или ориентирам, затем точно по уровню сигнала на приёмнике${lv ? ': ожидается около ' + lv : ''}. Если уровень ниже на 3 дБ и больше, антенна, скорее всего, поймала боковой лепесток.`
+    });
+  }
+  r.warnings.forEach((w) => recs.push({ level: 'warn', title: 'Проверьте исходные данные', text: w }));
+  return recs.map((x) => ({ ...x, title: cap(x.title) })).sort((a, b) => order[a.level] - order[b.level]);
+}
+

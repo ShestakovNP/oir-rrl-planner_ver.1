@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#16395F"/><stop offset="1" stop-color="#0B1F35"/>
+    </linearGradient>
+    <linearGradient id="lens" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#38C6B0"/><stop offset="1" stop-color="#4FA3FF"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="15" fill="url(#bg)"/>
+  <path d="M15 22.5 Q32 11 49 29.5 Q32 41 15 22.5 Z" fill="url(#lens)" fill-opacity=".38"/>
+  <path d="M15 22.5 Q32 11 49 29.5 Q32 41 15 22.5 Z" fill="none" stroke="url(#lens)" stroke-width="1.6"/>
+  <line x1="15" y1="22.5" x2="49" y2="29.5" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M15 22.5 V48 M49 29.5 V48" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round"/>
+  <path d="M10 48 H54" stroke="#FFFFFF" stroke-opacity=".28" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="15" cy="22.5" r="3.4" fill="#38C6B0" stroke="#FFFFFF" stroke-width="1.6"/>
+  <circle cx="49" cy="29.5" r="3.4" fill="#4FA3FF" stroke="#FFFFFF" stroke-width="1.6"/>
+</svg>

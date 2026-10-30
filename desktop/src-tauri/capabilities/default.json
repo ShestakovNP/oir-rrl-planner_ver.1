@@ -1,0 +1,98 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Права главного окна: база данных, диалоги сохранения и открытия, запись выбранных файлов и сетевые запросы только к разрешённым картографическим сервисам.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "sql:default",
+    "sql:allow-execute",
+    "dialog:default",
+    "dialog:allow-save",
+    "dialog:allow-open",
+    "fs:default",
+    "opener:default",
+    {
+      "identifier": "fs:allow-write-file",
+      "allow": [
+        {
+          "path": "$HOME/**"
+        },
+        {
+          "path": "$DESKTOP/**"
+        },
+        {
+          "path": "$DOCUMENT/**"
+        },
+        {
+          "path": "$DOWNLOAD/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-write-text-file",
+      "allow": [
+        {
+          "path": "$HOME/**"
+        },
+        {
+          "path": "$DESKTOP/**"
+        },
+        {
+          "path": "$DOCUMENT/**"
+        },
+        {
+          "path": "$DOWNLOAD/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-read-text-file",
+      "allow": [
+        {
+          "path": "$HOME/**"
+        },
+        {
+          "path": "$DESKTOP/**"
+        },
+        {
+          "path": "$DOCUMENT/**"
+        },
+        {
+          "path": "$DOWNLOAD/**"
+        }
+      ]
+    },
+    {
+      "identifier": "http:default",
+      "allow": [
+        {
+          "url": "https://tile.openstreetmap.org/*"
+        },
+        {
+          "url": "https://*.tile.opentopomap.org/*"
+        },
+        {
+          "url": "https://*.basemaps.cartocdn.com/*"
+        },
+        {
+          "url": "https://server.arcgisonline.com/*"
+        },
+        {
+          "url": "https://api.maptiler.com/*"
+        },
+        {
+          "url": "https://nominatim.openstreetmap.org/*"
+        },
+        {
+          "url": "https://api.opentopodata.org/*"
+        },
+        {
+          "url": "https://overpass-api.de/*"
+        }
+      ]
+    }
+  ]
+}
