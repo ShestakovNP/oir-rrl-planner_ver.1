@@ -1,13 +1,14 @@
 /** Main window: wires the map, lists, detail panels, file actions and dialogs together. */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from './state/store';
+import { vincenty } from './data/calc/geo';
 import { MapView, type FocusRequest, type MapLink, type MapMode } from './map/MapView';
 import { TopBar, type FileAction } from './components/TopBar';
 import { Sidebar, type ListTab, type Selection } from './components/Sidebar';
 import { LinkPanel } from './components/LinkPanel';
 import { SitePanel } from './components/SitePanel';
 import { AntennaPanel, RadioPanel } from './components/EquipmentPanel';
-import { AboutDialog, AddSiteDialog, NewLinkDialog } from './components/Dialogs';
+import { AboutDialog, AddSiteDialog, NewLinkDialog, ProjectsCleanupDialog } from './components/Dialogs';
 import { Dialog, Icon, Toasts, type DialogSpec, type Toast } from './components/ui';
 import { fmt } from './data/calc/format';
 import { uid } from './data/ids';
@@ -20,7 +21,7 @@ import { saveFile, openTextFile, safeFileName } from './storage/files';
 import { importBundle, makeBackup, makeProjectBundle, parseSitesCsv, sitesToCsv } from './storage/exchange';
 import { clearTileCache } from './map/tileCache';
 
-type Modal = { kind: 'add-site'; lat?: number; lon?: number } | { kind: 'new-link'; a?: string } | { kind: 'about' } | null;
+type Modal = { kind: 'add-site'; lat?: number; lon?: number } | { kind: 'new-link'; a?: string } | { kind: 'about' } | { kind: 'cleanup' } | null;
 
 export function App() {
   const store = useStore();
@@ -30,6 +31,7 @@ export function App() {
   const [sel, setSel] = useState<Selection>(null);
   const [mode, setMode] = useState<MapMode>('view');
   const [pending, setPending] = useState<string | null>(null);
+  const [moving, setMoving] = useState<{ id: string; lat: number; lon: number } | null>(null);
   const [focus, setFocus] = useState<FocusRequest | null>(null);
   const [dialog, setDialog] = useState<DialogSpec | null>(null);
   const [modal, setModal] = useState<Modal>(null);
@@ -60,10 +62,34 @@ export function App() {
 
   /* Esc cancels map modes */
   useEffect(() => {
-    const k = (e: KeyboardEvent) => { if (e.key === 'Escape' && mode !== 'view') { setMode('view'); setPending(null); } };
+    const k = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (moving) setMoving(null);
+      else if (mode !== 'view') { setMode('view'); setPending(null); }
+    };
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
-  }, [mode]);
+  }, [mode, moving]);
+
+  /* editing a site position on the map */
+  const startMove = (id: string) => {
+    const s = sites.find((x) => x.id === id);
+    if (!s) return;
+    setMode('view'); setPending(null);
+    setMoving({ id, lat: s.lat, lon: s.lon });
+    setTab('sites'); setSel({ kind: 'site', id });
+  };
+  const saveMove = () => {
+    if (!moving) return;
+    const s = sites.find((x) => x.id === moving.id);
+    setMoving(null);
+    if (!s || (Math.abs(s.lat - moving.lat) < 1e-9 && Math.abs(s.lon - moving.lon) < 1e-9)) return;
+    const old = { lat: s.lat, lon: s.lon };
+    store.updateSite({ ...s, lat: moving.lat, lon: moving.lon });
+    const dKm = vincenty(old.lat, old.lon, moving.lat, moving.lon).km;
+    const hasLinks = links.some((l) => l.siteA === s.id || l.siteB === s.id);
+    notify(`«${s.name}» перенесён на ${dKm < 1 ? fmt(dKm * 1000, 0) + ' м' : fmt(dKm, 2) + ' км'}. ${hasLinks ? 'Профили пролётов этого объекта загрузите заново (вкладка «Профиль»).' : ''}`);
+  };
 
   const mapLinks: MapLink[] = useMemo(() => {
     const byId = new Map(sites.map((s) => [s.id, s]));
@@ -111,6 +137,7 @@ export function App() {
   };
 
   const onMapClick = async (lat: number, lon: number) => {
+    if (moving) { setMoving({ ...moving, lat, lon }); return; }
     if (mode === 'add-site') {
       setMode('view');
       setModal({ kind: 'add-site', lat, lon });
@@ -158,7 +185,7 @@ export function App() {
         if (!f) return;
         const res = await importBundle(store.repo, JSON.parse(f.text));
         await store.reloadAll();
-        notify(`Импортировано: проектов ${res.projects}, площадок ${res.sites}, пролётов ${res.links}. Выберите проект в списке слева.`);
+        notify(`Импортировано: проектов ${res.projects}, объектов ${res.sites}, пролётов ${res.links}. Выберите проект в списке слева.`);
         return;
       }
       if (!project) return;
@@ -167,15 +194,15 @@ export function App() {
         const w = await saveFile(safeFileName(project.name) + '.json', JSON.stringify(b, null, 1), [{ name: 'Проект', extensions: ['json'] }]);
         if (w) notify('Проект сохранён в файл.');
       } else if (a === 'export-csv') {
-        const w = await saveFile(safeFileName(project.name) + ' — площадки.csv', sitesToCsv(sites), [{ name: 'CSV', extensions: ['csv'] }]);
-        if (w) notify(`Площадки выгружены: ${sites.length}.`);
+        const w = await saveFile(safeFileName(project.name) + ' — объекты.csv', sitesToCsv(sites), [{ name: 'CSV', extensions: ['csv'] }]);
+        if (w) notify(`Объекты выгружены: ${sites.length}.`);
       } else if (a === 'import-csv') {
         const f = await openTextFile([{ name: 'CSV', extensions: ['csv', 'txt'] }]);
         if (!f) return;
         const { sites: rows, skipped } = parseSitesCsv(f.text);
         for (const r of rows) await store.addSite({ name: r.name, code: r.code, lat: r.lat, lon: r.lon, groundM: r.groundM, notes: r.notes });
         if (rows.length) focusOn(rows.map((r) => [r.lat, r.lon]));
-        notify(`Добавлено площадок: ${rows.length}.${skipped.length ? ` Пропущены строки: ${skipped.slice(0, 6).join(', ')}.` : ''}`, !rows.length);
+        notify(`Добавлено объектов: ${rows.length}.${skipped.length ? ` Пропущены строки: ${skipped.slice(0, 6).join(', ')}.` : ''}`, !rows.length);
         setTab('sites');
       } else if (a === 'report-project') {
         await saveReport(links, `Расчёт РРЛ — ${project.name}`);
@@ -207,7 +234,8 @@ export function App() {
           key={s.id} site={s} onClose={() => setSel(null)} onFocus={() => focusOn([[s.lat, s.lon]])}
           onOpenLink={(id) => { setTab('links'); setSel({ kind: 'link', id }); }}
           onStartLink={() => setModal({ kind: 'new-link', a: s.id })}
-          onDelete={() => confirmDelete('Удалить площадку?', n ? `Вместе с площадкой «${s.name}» удалятся пролёты: ${n}.` : `Площадка «${s.name}» будет удалена.`, async () => { await store.deleteSite(s.id); setSel(null); })}
+          onMove={() => { startMove(s.id); focusOn([[s.lat, s.lon]]); }}
+          onDelete={() => confirmDelete('Удалить объект?', n ? `Вместе с объектом «${s.name}» удалятся пролёты: ${n}.` : `Объект «${s.name}» будет удалён.`, async () => { await store.deleteSite(s.id); setSel(null); })}
         />
       );
     }
@@ -233,7 +261,9 @@ export function App() {
           onAddLink={() => setModal({ kind: 'new-link' })}
           onNewProject={() => setDialog({ title: 'Новый проект', input: { label: 'Название проекта', value: '' }, confirm: 'Создать', onConfirm: (v) => { void store.createProject(v!).then(() => notify('Проект создан.')).catch(fail); } })}
           onRenameProject={() => project && setDialog({ title: 'Переименовать проект', input: { label: 'Название проекта', value: project.name }, confirm: 'Сохранить', onConfirm: (v) => { void store.updateProject({ ...project, name: v! }); } })}
-          onDeleteProject={() => project && confirmDelete('Удалить проект?', `Проект «${project.name}» удалится вместе со всеми площадками (${sites.length}) и пролётами (${links.length}). Перед удалением можно сохранить его через «Файл» → «Экспорт проекта».`, async () => { await store.deleteProject(project.id); notify('Проект удалён.'); })}
+          onCleanupProjects={() => setModal({ kind: 'cleanup' })}
+          onDeleteProjectById={async (id) => { const pr = store.projects.find((x) => x.id === id); try { await store.deleteProject(id); if (id === project?.id) setSel(null); notify(`Проект «${pr?.name ?? ''}» удалён.`); } catch (e) { fail(e); } }}
+          onDeleteProject={() => project && confirmDelete('Удалить проект?', `Проект «${project.name}» удалится вместе со всеми объектами (${sites.length}) и пролётами (${links.length}). Перед удалением можно сохранить его через «Файл» → «Экспорт проекта».`, async () => { await store.deleteProject(project.id); notify('Проект удалён.'); })}
           onAddRadio={() => { const r = { id: uid(), name: 'Новое ППУ', band: '', modes: [], notes: '' }; store.saveLibrary({ ...library, radios: [...library.radios, r] }); setSel({ kind: 'radio', id: r.id }); }}
           onAddAntenna={() => { const a = { id: uid(), name: 'Новая антенна', diameterM: 0.6, xpdDb: null, gains: [], notes: '' }; store.saveLibrary({ ...library, antennas: [...library.antennas, a] }); setSel({ kind: 'antenna', id: a.id }); }}
         />
@@ -242,14 +272,28 @@ export function App() {
             providerId={settings.providerId} sites={sites} links={mapLinks} selectedSiteId={selSiteId} selectedLinkId={selLinkId}
             pendingLinkSiteId={pending} mode={mode} focus={focus} initialView={settings.mapView}
             onMapClick={(la, lo) => void onMapClick(la, lo)} onSiteClick={onSiteClick}
-            onSiteMoved={(id, la, lo) => { const s = sites.find((x) => x.id === id); if (s) { store.updateSite({ ...s, lat: la, lon: lo }); notify('Координаты площадки обновлены. Если у пролётов профиль SRTM, загрузите его заново.'); } }}
+            movingSiteId={moving?.id ?? null} moveDraft={moving ? { lat: moving.lat, lon: moving.lon } : null}
+            onStartMove={startMove} onMoveDraft={(la, lo) => setMoving((m) => (m ? { ...m, lat: la, lon: lo } : m))}
             onLinkClick={(id) => { setTab('links'); setSel({ kind: 'link', id }); }}
             onView={(center, zoom) => store.setSetting('mapView', { center, zoom })}
           />
           <div className="map-toolbar">
-            {mode !== 'view' ? (
+            {moving ? (() => {
+              const s = sites.find((x) => x.id === moving.id);
+              const dKm = s ? vincenty(s.lat, s.lon, moving.lat, moving.lon).km : 0;
+              return (
+                <div className="floating mode-banner move-banner" role="status">
+                  <div>
+                    <div>Перетащите «{s?.name}» в нужное место или кликните по карте</div>
+                    <div className="hint">{moving.lat.toFixed(6)}, {moving.lon.toFixed(6)}{dKm > 0.0005 ? ` · смещение ${dKm < 1 ? fmt(dKm * 1000, 0) + ' м' : fmt(dKm, 2) + ' км'}` : ''} · Esc — отмена</div>
+                  </div>
+                  <button type="button" className="btn sm primary" onClick={saveMove}>Сохранить</button>
+                  <button type="button" className="btn sm" onClick={() => setMoving(null)}><Icon name="close" />Отмена</button>
+                </div>
+              );
+            })() : mode !== 'view' ? (
               <div className="floating mode-banner" role="status">
-                {mode === 'add-site' ? 'Кликните по карте, чтобы поставить площадку' : pending ? `Выбрана «${sites.find((s) => s.id === pending)?.name}». Кликните вторую площадку` : 'Кликните первую площадку пролёта'}
+                {mode === 'add-site' ? 'Кликните по карте, чтобы поставить объект' : pending ? `Выбран «${sites.find((s) => s.id === pending)?.name}». Кликните второй объект` : 'Кликните первый объект пролёта'}
                 <span className="hint">Esc — отмена</span>
                 <button type="button" className="btn sm" onClick={() => { setMode('view'); setPending(null); }}><Icon name="close" />Отмена</button>
               </div>
@@ -271,6 +315,7 @@ export function App() {
         <NewLinkDialog initialA={modal.a} onClose={() => setModal(null)} onCreate={(a, b) => void createLink(a, b)} onPickOnMap={() => { setModal(null); setSel(null); setMode('pick-link'); setPending(modal.a ?? null); }} />
       ) : null}
       {modal?.kind === 'about' ? <AboutDialog onClose={() => setModal(null)} /> : null}
+      {modal?.kind === 'cleanup' ? <ProjectsCleanupDialog onClose={() => setModal(null)} onDeleteOne={async (id) => { const pr = store.projects.find((x) => x.id === id); try { await store.deleteProject(id); notify(`Проект «${pr?.name ?? ''}» удалён.`); } catch (e) { fail(e); } }} onDelete={async (ids) => { try { await store.deleteProjects(ids); setSel(null); notify(`Удалено проектов: ${ids.length}.`); } catch (e) { fail(e); } }} /> : null}
       <Toasts items={toasts} />
     </div>
   );

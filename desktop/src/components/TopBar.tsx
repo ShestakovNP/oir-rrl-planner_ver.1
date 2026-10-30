@@ -78,8 +78,8 @@ export function TopBar({ onPlace, onAction }: Props) {
             <div className="label">Проект{project ? ` «${project.name}»` : ''}</div>
             <button role="menuitem" type="button" disabled={!project} onClick={() => act('report-project')}><Icon name="pdf" />Отчёт PDF по всем пролётам</button>
             <button role="menuitem" type="button" disabled={!project} onClick={() => act('export-project')}><Icon name="download" />Экспорт проекта<small>.json</small></button>
-            <button role="menuitem" type="button" disabled={!project} onClick={() => act('export-csv')}><Icon name="download" />Экспорт площадок<small>.csv</small></button>
-            <button role="menuitem" type="button" disabled={!project} onClick={() => act('import-csv')}><Icon name="upload" />Импорт площадок<small>.csv</small></button>
+            <button role="menuitem" type="button" disabled={!project} onClick={() => act('export-csv')}><Icon name="download" />Экспорт объектов<small>.csv</small></button>
+            <button role="menuitem" type="button" disabled={!project} onClick={() => act('import-csv')}><Icon name="upload" />Импорт объектов<small>.csv</small></button>
             <hr />
             <div className="label">Все данные</div>
             <button role="menuitem" type="button" onClick={() => act('import')}><Icon name="upload" />Импорт проекта или копии<small>.json</small></button>

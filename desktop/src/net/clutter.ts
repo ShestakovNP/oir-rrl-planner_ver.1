@@ -1,5 +1,5 @@
 /**
- * Buildings and forests along a link from OpenStreetMap (Overpass API, no key).
+ * Buildings, forests and water along a link from OpenStreetMap (Overpass API, no key).
  *
  * One request per link: all buildings and forest areas in a narrow corridor
  * around the path. Heights: the OSM `height` tag when present, otherwise
@@ -30,7 +30,7 @@ function corridor(lat1: number, lon1: number, lat2: number, lon2: number, halfWi
 
 export async function fetchClutterObjects(lat1: number, lon1: number, lat2: number, lon2: number, opts: ClutterOptions): Promise<ClutterObject[]> {
   const poly = corridor(lat1, lon1, lat2, lon2, Math.max(40, (opts.halfWidth ?? 15) + 30));
-  const q = `[out:json][timeout:60];(way["building"](poly:"${poly}");relation["building"](poly:"${poly}");way["landuse"="forest"](poly:"${poly}");way["natural"="wood"](poly:"${poly}");relation["landuse"="forest"](poly:"${poly}");relation["natural"="wood"](poly:"${poly}"););out tags geom;`;
+  const q = `[out:json][timeout:60];(way["building"](poly:"${poly}");relation["building"](poly:"${poly}");way["landuse"="forest"](poly:"${poly}");way["natural"="wood"](poly:"${poly}");relation["landuse"="forest"](poly:"${poly}");relation["natural"="wood"](poly:"${poly}");way["natural"="water"](poly:"${poly}");relation["natural"="water"](poly:"${poly}");way["waterway"="riverbank"](poly:"${poly}");way["landuse"="reservoir"](poly:"${poly}");way["waterway"~"^(river|canal)$"](poly:"${poly}"););out tags geom;`;
   let data: { elements?: OsmEl[] };
   try {
     data = await httpJson<{ elements?: OsmEl[] }>(`${OVERPASS_URL}?data=${encodeURIComponent(q)}`, 90000);

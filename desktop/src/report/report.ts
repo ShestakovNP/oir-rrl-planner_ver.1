@@ -1,7 +1,7 @@
 /** PDF reports: one link, or a whole project (summary page + one section per link). */
 import { PdfDoc } from './pdf/writer';
 import type { Link, Project } from '../data/types';
-import type { Level, LinkResult } from '../data/calc/link';
+import { surfaceRuns, type Level, type LinkResult } from '../data/calc/link';
 import { downtime, fmt, ghz, pct, polLong, polName, stripMarks } from '../data/calc/format';
 import { formatDms, n360 } from '../data/calc/geo';
 import { APP_NAME, ORG_FULL } from '../config';
@@ -11,7 +11,7 @@ export interface ReportItem { link: Link; result: LinkResult }
 const C = {
   ink: '#1a2129', muted: '#5a6876', body: '#36414c', line: '#d3dbe2', soft: '#f2f5f8', accent: '#1d5bb8', accentSoft: '#e2ebf8',
   ok: '#1c7f47', okSoft: '#e1f2e8', warn: '#9a6513', warnSoft: '#f7ebd6', bad: '#b53a2a', badSoft: '#f8e3df',
-  ground: '#c3cad1', groundEdge: '#6f7b86', forest: '#3b8a57', fresnel: '#cfdcf0', fresnelEdge: '#7d9fd4', navy: '#0e2a47', teal: '#38c6b0', blue: '#4fa3ff'
+  ground: '#c3cad1', groundEdge: '#6f7b86', forest: '#3b8a57', building: '#b0703f', water: '#2b8fe0', clutter: '#7f8f6a', fresnel: '#cfdcf0', fresnelEdge: '#7d9fd4', navy: '#0e2a47', teal: '#38c6b0', blue: '#4fa3ff'
 };
 const SEM: Record<Level, string> = { ok: C.ok, warn: C.warn, bad: C.bad, info: C.accent };
 const SEMS: Record<Level, string> = { ok: C.okSoft, warn: C.warnSoft, bad: C.badSoft, info: C.accentSoft };
@@ -133,8 +133,17 @@ function profileChart(L: Layout, r: LinkResult) {
   pdf.text(X1, Y1 + 19, 'км', { size: 7, color: C.muted, align: 'right' });
   pdf.text(M, Y0 - 5, 'м', { size: 7, color: C.muted });
   pdf.poly([...s.map((o) => [X(o.d), Y(o.los + o.F1)] as [number, number]), ...s.slice().reverse().map((o) => [X(o.d), Y(o.los - o.F1)] as [number, number])], { fill: C.fresnel, stroke: C.fresnelEdge, w: 0.5, dash: [2, 2] });
-  pdf.poly([...s.map((o) => [X(o.d), Y(o.top)] as [number, number]), ...s.slice().reverse().map((o) => [X(o.d), Y(o.g)] as [number, number])], { fill: C.forest });
   pdf.poly([[X(0), Y1], ...s.map((o) => [X(o.d), Math.min(Y1, Y(o.g))] as [number, number]), [X(P.D), Y1]], { fill: C.ground, stroke: C.groundEdge, w: 0.6 });
+  const runs = surfaceRuns(s);
+  runs.filter((r0) => r0.kind !== 'w').forEach((r0) => {
+    const part = s.slice(Math.max(0, r0.from - 1), Math.min(s.length, r0.to + 2));
+    pdf.poly([...part.map((o) => [X(o.d), Y(o.top)] as [number, number]), ...part.slice().reverse().map((o) => [X(o.d), Y(o.g)] as [number, number])], { fill: r0.kind === 'b' ? C.building : r0.kind === 'f' ? C.forest : C.clutter });
+  });
+  runs.filter((r0) => r0.kind === 'w').forEach((r0) => {
+    const part = s.slice(r0.from, r0.to + 1);
+    for (let i = 1; i < part.length; i++) pdf.line(X(part[i - 1].d), Y(part[i - 1].g), X(part[i].d), Y(part[i].g), { stroke: C.water, w: 3 });
+    if (part.length === 1) pdf.circle(X(part[0].d), Y(part[0].g), 1.5, { fill: C.water });
+  });
   pdf.line(X(0), Y(P.HA), X(P.D), Y(P.HB), { stroke: C.accent, w: 1.2 });
   pdf.line(X(0), Y(P.gA0), X(0), Y(P.HA), { stroke: C.ink, w: 1.5 });
   pdf.line(X(P.D), Y(P.gB0), X(P.D), Y(P.HB), { stroke: C.ink, w: 1.5 });
@@ -144,7 +153,7 @@ function profileChart(L: Layout, r: LinkResult) {
   if (c) { const cx = X(c.d); pdf.line(cx, Y(c.top), cx, Y(c.los), { stroke: C.bad, w: 1, dash: [2, 2] }); pdf.circle(cx, Y(c.top), 2.2, { fill: C.bad }); }
   L.y += ph;
   let lx = M;
-  ([['Рельеф', C.ground], ['Лес и застройка', C.forest], ['Зона Френеля', C.fresnel], ['Линия прямой видимости', C.accent], ['Узкое место', C.bad]] as const).forEach(([t, col]) => {
+  ([['Рельеф', C.ground], ['Здания', C.building], ['Лес', C.forest], ['Вода', C.water], ['Зона Френеля', C.fresnel], ['Луч', C.accent], ['Узкое место', C.bad]] as const).forEach(([t, col]) => {
     pdf.rect(lx, L.y + 2, 10, 6, { fill: col });
     pdf.text(lx + 14, L.y + 8, t, { size: 7.5, color: C.muted });
     lx += pdf.width(t, 7.5) + 30;
@@ -153,7 +162,7 @@ function profileChart(L: Layout, r: LinkResult) {
   if (c) {
     const relTxt = c.rel > 3 ? `в ${fmt(c.rel, 0)} раз больше` : `${Math.round(c.rel * 100)}%`;
     const lowest = r.channels.reduce((a, b) => (b.fGHz < a.fGHz ? b : a));
-    L.para(`Самое узкое место — на ${fmt(c.d, 2)} км от площадки «${r.siteA.name}»: между лучом и верхушкой препятствия ${fmt(c.H, 1)} м, это ${relTxt} радиуса зоны Френеля (${fmt(c.F1, 1)} м${r.multi ? ' на ' + ghz(lowest.ch.freqMHz) : ''}). ${r.clearance.label}.`, { size: 9 });
+    L.para(`Самое узкое место — на ${fmt(c.d, 2)} км от объекта «${r.siteA.name}»: между лучом и верхушкой препятствия ${fmt(c.H, 1)} м, это ${relTxt} радиуса зоны Френеля (${fmt(c.F1, 1)} м${r.multi ? ' на ' + ghz(lowest.ch.freqMHz) : ''}). ${r.clearance.label}.`, { size: 9 });
   }
 }
 
@@ -198,7 +207,7 @@ function linkSection(L: Layout, it: ReportItem, project: Project | null, date: s
   L.y += 62;
 
   /* sites */
-  L.h2('Площадки и антенны');
+  L.h2('Объекты и антенны');
   L.table([{ t: 'Параметр', w: 42 }, { t: A.name, w: 29 }, { t: B.name, w: 29 }], [
     row(['Номер / код', A.code || '—', B.code || '—']),
     row(['Широта', formatDms(A.lat, true) + ` (${fmt(A.lat, 6)})`, formatDms(B.lat, true) + ` (${fmt(B.lat, 6)})`]),
@@ -288,6 +297,11 @@ function linkSection(L: Layout, it: ReportItem, project: Project | null, date: s
     steps.push(row(['Коэффициент усиления антенн A / B', { t: c.ch.gainA == null || c.ch.gainB == null ? 'расчётный из диаметра или по паспорту' : 'по паспорту', color: C.muted }, { t: `${fmt(c.gA, 1)} / ${fmt(c.gB, 1)} дБ`, bold: true }]));
     steps.push(row(['Потери на препятствии', { t: `при k = ${fmt(r.k, 2)}; в плохую погоду ${fmt(c.diffMin, 1)} дБ`, color: C.muted }, { t: fmt(c.diff, 1) + ' дБ', bold: true }]));
     steps.push(row(['Затухание в газах', { t: `${fmt(c.gasK, 3)} дБ/км`, color: C.muted }, { t: fmt(c.gas, 2) + ' дБ', bold: true }]));
+    if (c.refl) {
+      const w = c.refl;
+      steps.push(row(['Отражение от воды', { t: w.blocked ? `точка на ${fmt(w.d, 2)} км закрыта` : `на ${fmt(w.d, 2)} км, ψ ${fmt(w.psi, 1)} мрад, ρ ${fmt(w.rho, 2)}`, color: C.muted }, { t: w.blocked ? 'нет' : w.rho < 0.1 ? 'не влияет' : w.loss > 0 ? `−${fmt(w.loss, 1)} дБ` : `+${fmt(-w.loss, 1)} дБ (не учтено)`, bold: true }]));
+      if (!w.blocked && w.rho >= 0.1) steps.push(row(['Худшее замирание от отражения', { t: `при k = ${fmt(w.kWorst, 2)}; разнесение A/B ${fmt(w.spacingA, 1)}/${fmt(w.spacingB, 1)} м`, color: C.muted }, { t: fmt(w.worst, 1) + ' дБ', bold: true }]));
+    }
     if (c.ref) steps.push(row([`Сигнал на приёмнике, ${c.ref.name}`, { t: `мощность ${fmt(c.ref.txDbm, 1)} дБм + антенны − потери`, color: C.muted }, { t: fmt(c.ref.prx, 1) + ' дБм', bold: true }]));
     steps.push(row(['Запас, нужный для нормы', { t: 'чтобы перерывов было не больше допустимого', color: C.muted }, { t: fmt(c.marginRequired, 1) + ' дБ', bold: true }]));
     steps.push(row(['Дождь: ослабление в ливень', { t: `${fmt(r.climate.rainR001, 0)} мм/ч, ${fmt(c.rain.gamma, 3)} дБ/км`, color: C.muted }, { t: fmt(c.rain.A001, 1) + ' дБ', bold: true }]));
@@ -320,7 +334,7 @@ function linkSection(L: Layout, it: ReportItem, project: Project | null, date: s
 
 function methodology(L: Layout) {
   L.h2('Методика', 40);
-  L.para('Потери в свободном пространстве, азимуты (эллипсоид WGS-84) и углы места рассчитываются точно. Дифракция на препятствии — модель одиночного препятствия-ножа. Многолучевые замирания — быстрый метод МСЭ-R P.530. Дождь — МСЭ-R P.530 и P.838. Затухание в газах — МСЭ-R P.676, стандартная атмосфера. Методика НИИР учитывает больше факторов, поэтому вероятности перерывов могут отличаться от расчёта в DRRL. Для рабочего проекта сверяйте результат с DRRL или Pathloss.', { size: 9, color: C.body });
+  L.para('Потери в свободном пространстве, азимуты (эллипсоид WGS-84) и углы места рассчитываются точно. Дифракция на препятствии — модель одиночного препятствия-ножа. Многолучевые замирания — быстрый метод МСЭ-R P.530. Дождь — МСЭ-R P.530 и P.838. Затухание в газах — МСЭ-R P.676, стандартная атмосфера. Отражение от водной глади — двухлучевая модель: точка зеркального отражения на эквивалентной Земле, коэффициент отражения пресной воды по Френелю (диэлектрическая проницаемость по модели Дебая), фактор расходимости, рассеяние на волнении (σ = 0,1 м), подавление отражённого луча диаграммой антенн; в уровень сигнала входят только потери при расчётном k, худший случай при k от kmin до 3 приведён отдельно. Методика НИИР учитывает больше факторов, поэтому вероятности перерывов могут отличаться от расчёта в DRRL. Для рабочего проекта сверяйте результат с DRRL или Pathloss.', { size: 9, color: C.body });
 }
 
 export function buildReport(items: ReportItem[], project: Project | null): Uint8Array {

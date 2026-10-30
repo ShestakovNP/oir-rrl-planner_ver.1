@@ -1,11 +1,12 @@
 /** Read-only views of a LinkResult: verdict, recommendations, profile chart, azimuths, modes, polarization, steps. */
 import { useEffect, useRef, useState } from 'react';
 import type { Link } from '../data/types';
-import { geometry, interpolate, type Level, type LinkResult } from '../data/calc/link';
+import { geometry, interpolate, surfaceRuns, type Level, type LinkResult } from '../data/calc/link';
 import { setHover, useHover } from '../state/hover';
 import { downtime, fmt, ghz, pct, polLong } from '../data/calc/format';
 import { n360 } from '../data/calc/geo';
-import { Rich } from './ui';
+import { Icon, Rich } from './ui';
+import { exportChart, type LegendItem } from './chartExport';
 
 export function Verdict({ r }: { r: LinkResult }) {
   const c = r.channels[0];
@@ -50,8 +51,10 @@ const nice = (range: number, count: number) => {
   return (n < 1.5 ? 1 : n < 3 ? 2 : n < 7 ? 5 : 10) * p;
 };
 
-export function ProfileChart({ r, height = 260, linkId }: { r: LinkResult; height?: number; linkId?: string }) {
+export function ProfileChart({ r, height = 260, linkId, notify }: { r: LinkResult; height?: number; linkId?: string; notify?(t: string, e?: boolean): void }) {
   const box = useRef<HTMLDivElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [saving, setSaving] = useState(false);
   const hover = useHover();
   const [W, setW] = useState(480);
   const [k, setK] = useState(r.k);
@@ -75,7 +78,46 @@ export function ProfileChart({ r, height = 260, linkId }: { r: LinkResult; heigh
   const yt: number[] = []; for (let v = Math.ceil(ymin / ys) * ys; v <= ymax; v += ys) yt.push(v);
   const xt: number[] = []; for (let d = 0; d <= P.D + 1e-9; d += xs) xt.push(d);
   const fz = s.map((o) => `${X(o.d)},${Y(o.los + o.F1)}`).join(' ') + ' ' + s.slice().reverse().map((o) => `${X(o.d)},${Y(o.los - o.F1)}`).join(' ');
-  const forest = s.map((o) => `${X(o.d)},${Y(o.top)}`).join(' ') + ' ' + s.slice().reverse().map((o) => `${X(o.d)},${Y(o.g)}`).join(' ');
+  const runs = surfaceRuns(s);
+  const runPoly = (from: number, to: number) => {
+    const part = s.slice(Math.max(0, from - 1), Math.min(s.length, to + 2));
+    return part.map((o) => `${X(o.d)},${Y(o.top)}`).join(' ') + ' ' + part.slice().reverse().map((o) => `${X(o.d)},${Y(o.g)}`).join(' ');
+  };
+  const runLine = (from: number, to: number) => s.slice(from, to + 1).map((o) => `${X(o.d)},${Y(o.g)}`).join(' ');
+  const hasManual = runs.some((r0) => r0.kind === 'c');
+  const hasKind = (kd: string) => runs.some((r0) => r0.kind === kd);
+  /* reflection from water (shown at the calculation k only) */
+  const rc = Math.abs(k - r.k) < 1e-6 ? r.channels.find((ch) => ch.refl && !ch.refl.blocked && ch.refl.rho >= 0.1) : undefined;
+  const refl = rc?.refl ?? null;
+  const reflG = refl ? (() => { const i = s.findIndex((o) => o.d >= refl.d); const o = s[Math.max(0, i)]; return o ? o.g : 0; })() : 0;
+  const legend: (LegendItem & { v: string; on: boolean })[] = [
+    { label: 'Рельеф', v: '--ground', color: '', on: true },
+    { label: 'Здания', v: '--building', color: '', on: hasKind('b') },
+    { label: 'Лес', v: '--forest', color: '', on: hasKind('f') },
+    { label: 'Вода', v: '--water', color: '', on: hasKind('w') },
+    { label: 'Препятствия (вручную)', v: '--clutter', color: '', on: hasManual },
+    { label: 'Зона Френеля' + (lowest && r.multi ? ` (${ghz(lowest.ch.freqMHz)})` : ''), v: '--fresnel-edge', color: '', on: true },
+    { label: 'Луч', v: '--accent', color: '', line: true, on: true },
+    { label: 'Отражение от воды', v: '--water', color: '', line: true, on: !!refl },
+    { label: 'Узкое место', v: '--bad', color: '', line: true, on: !!G.crit }
+  ];
+  const save = async (format: 'png' | 'jpeg') => {
+    if (!svgRef.current) return;
+    setSaving(true);
+    try {
+      const cs = getComputedStyle(document.documentElement);
+      const items = legend.filter((x) => x.on).map((x) => ({ ...x, color: cs.getPropertyValue(x.v).trim() || '#888' }));
+      const nm = `${r.siteA.name || 'A'} — ${r.siteB.name || 'B'}`;
+      const sub = `${fmt(P.D, 2)} км · k = ${fmt(k, 2)} · ${r.channels.map((ch) => ch.label).join(', ')}`;
+      const fileName = `Профиль ${nm}`.replace(/[\\/:*?"<>|]+/g, '_');
+      const res = await exportChart(svgRef.current, { format, fileName, title: `Профиль трассы ${nm}`, subtitle: sub, legend: items });
+      if (res && notify) notify(res === 'download' ? 'Изображение профиля скачано.' : `Изображение профиля сохранено: ${res}`);
+    } catch (e) {
+      notify?.((e as Error).message || 'Не удалось сохранить изображение.', true);
+    } finally {
+      setSaving(false);
+    }
+  };
   const ground = `${X(0)},${H - mb} ` + s.map((o) => `${X(o.d)},${Math.min(H - mb, Y(o.g))}`).join(' ') + ` ${X(P.D)},${H - mb}`;
   const c = G.crit;
   /* cursor: from the map or from the chart itself */
@@ -100,20 +142,31 @@ export function ProfileChart({ r, height = 260, linkId }: { r: LinkResult; heigh
   return (
     <div className="section" style={{ gap: 8 }}>
       <div ref={box}>
-        <svg className="chart" width={W} height={H} viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Профиль трассы" onMouseMove={onMove} onMouseLeave={() => linkId && setHover(null)}>
+        <svg ref={svgRef} className="chart" width={W} height={H} viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Профиль трассы" onMouseMove={onMove} onMouseLeave={() => linkId && setHover(null)}>
           {yt.map((v) => (
             <g key={v}><line className="grid" x1={ml} x2={W - mr} y1={Y(v)} y2={Y(v)} /><text className="tick" x={ml - 6} y={Y(v) + 3.5} textAnchor="end">{Math.round(v)}</text></g>
           ))}
           {xt.map((d) => <text key={d} className="tick" x={X(d)} y={H - 7} textAnchor="middle">{fmt(d, xs < 1 ? 1 : 0)}</text>)}
           <text className="tick" x={W - 2} y={H - 7} textAnchor="end">км</text>
           <polygon className="fz" points={fz} />
-          <polygon className="forest" points={forest} />
           <polygon className="ground" points={ground} />
+          {runs.filter((r0) => r0.kind !== 'w').map((r0, i) => (
+            <polygon key={'r' + i} className={r0.kind === 'b' ? 'bld' : r0.kind === 'f' ? 'forest' : 'clutter'} points={runPoly(r0.from, r0.to)} />
+          ))}
+          {runs.filter((r0) => r0.kind === 'w').map((r0, i) => (
+            <polyline key={'w' + i} className="water" points={runLine(r0.from, r0.to)} />
+          ))}
           <line className="los" x1={X(0)} y1={Y(P.HA)} x2={X(P.D)} y2={Y(P.HB)} />
           <line className="mast" x1={X(0)} y1={Y(P.gA0)} x2={X(0)} y2={Y(P.HA)} />
           <line className="mast" x1={X(P.D)} y1={Y(P.gB0)} x2={X(P.D)} y2={Y(P.HB)} />
           <text className="lbl" x={X(0) + 6} y={Y(P.HA) - 8}>{r.siteA.name} · {fmt(P.hA, 0)} м</text>
           <text className="lbl" x={X(P.D) - 6} y={Y(P.HB) - 8} textAnchor="end">{fmt(P.hB, 0)} м · {r.siteB.name}</text>
+          {refl ? (
+            <g>
+              <polyline className="refl-ray" points={`${X(0)},${Y(P.HA)} ${X(refl.d)},${Y(reflG)} ${X(P.D)},${Y(P.HB)}`} />
+              <circle className="refl" cx={X(refl.d)} cy={Y(reflG)} r={4.5} />
+            </g>
+          ) : null}
           {c ? (
             <g>
               <line className="crit" x1={X(c.d)} x2={X(c.d)} y1={Y(c.top)} y2={Y(c.los)} />
@@ -128,7 +181,7 @@ export function ProfileChart({ r, height = 260, linkId }: { r: LinkResult; heigh
               <circle className="cur-top" cx={X(cur.d)} cy={Y(cur.top)} r={3.5} />
               <rect className="cur-tip" x={tipX} y={mt} width={tipW} height={92} rx={6} />
               <text className="cur-txt" x={tipX + 10} y={mt + 17}><tspan fontWeight="700">{fmt(cur.d, 2)} км</tspan> от «{r.siteA.name}»</text>
-              <text className="cur-txt" x={tipX + 10} y={mt + 34}>Земля {fmt(terrain.g, 0)} м{terrain.c > 0 ? `, препятствие ${fmt(terrain.c, 0)} м` : ''}</text>
+              <text className="cur-txt" x={tipX + 10} y={mt + 34}>Земля {fmt(terrain.g, 0)} м{terrain.t === 'w' ? ', вода' : terrain.c > 0 ? `, ${terrain.t === 'b' ? 'здание' : terrain.t === 'f' ? 'лес' : 'препятствие'} ${fmt(terrain.c, 0)} м` : ''}</text>
               <text className="cur-txt" x={tipX + 10} y={mt + 51}>Луч на высоте {fmt(cur.los, 0)} м</text>
               <text className="cur-txt" x={tipX + 10} y={mt + 68}>Зона Френеля R₁ = {fmt(cur.F1, 1)} м</text>
               <text className={`cur-txt ${cur.F1 > 0 && cur.H / cur.F1 < 0.577 ? (cur.H < 0 ? 'bad' : 'warn') : 'ok'}`} x={tipX + 10} y={mt + 85} fontWeight="700">
@@ -139,11 +192,9 @@ export function ProfileChart({ r, height = 260, linkId }: { r: LinkResult; heigh
         </svg>
       </div>
       <div className="legend">
-        <span><i style={{ background: 'var(--ground)' }} />Рельеф</span>
-        <span><i style={{ background: 'var(--forest)' }} />Лес и застройка</span>
-        <span><i style={{ background: 'var(--fresnel)', border: '1px dashed var(--fresnel-edge)' }} />Зона Френеля{lowest && r.multi ? ` (${ghz(lowest.ch.freqMHz)})` : ''}</span>
-        <span><i style={{ background: 'var(--accent)', height: 2 }} />Луч</span>
-        <span><i style={{ background: 'var(--bad)', height: 2 }} />Узкое место</span>
+        {legend.filter((x) => x.on).map((x) => (
+          <span key={x.label}><i style={x.line ? { background: `var(${x.v})`, height: 2 } : x.v === '--fresnel-edge' ? { background: 'var(--fresnel)', border: '1px dashed var(--fresnel-edge)' } : { background: `var(${x.v})` }} />{x.label}</span>
+        ))}
       </div>
       <div className="kctl">
         <label htmlFor="kslider">Рефракция k</label>
@@ -151,7 +202,16 @@ export function ProfileChart({ r, height = 260, linkId }: { r: LinkResult; heigh
         <span className="num">{fmt(k, 2)}</span>
         <button type="button" className="btn sm" onClick={() => setK(r.k)}>Обычная {fmt(r.k, 2)}</button>
         <button type="button" className="btn sm" onClick={() => setK(r.kMin)}>Плохая погода {fmt(r.kMin, 2)}</button>
+        <span className="kctl-sp" />
+        <span>Сохранить график:</span>
+        <button type="button" className="btn sm" disabled={saving} onClick={() => void save('png')} title="Сохранить профиль как картинку PNG (без потерь, для документов)"><Icon name="download" />PNG</button>
+        <button type="button" className="btn sm" disabled={saving} onClick={() => void save('jpeg')} title="Сохранить профиль как картинку JPEG (меньше размер, для почты и мессенджеров)"><Icon name="download" />JPEG</button>
       </div>
+      {refl ? (
+        <p className="hint">
+          Голубой пунктир — луч, отражённый от воды на {fmt(refl.d, 2)} км{r.multi && rc ? ` (${rc.tag})` : ''}: он складывается с прямым лучом, и в зависимости от рефракции сигнал усиливается или ослабевает до {fmt(refl.worst, 1)} дБ. Подробности — в рекомендациях и на вкладке «Подробно».
+        </p>
+      ) : null}
       {c ? (
         <p className="hint">
           Узкое место — {fmt(c.d, 2)} км от «{r.siteA.name}»: до препятствия {fmt(c.H, 1)} м, это {c.rel > 3 ? `в ${fmt(c.rel, 0)} раз больше` : Math.round(c.rel * 100) + '%'} радиуса зоны Френеля ({fmt(c.F1, 1)} м). Открытой трасса считается от 58%.
@@ -187,7 +247,7 @@ function Dial({ az, mag }: { az: number; mag: number | null }) {
 }
 
 export function Azimuths({ r, decl }: { r: LinkResult; decl: number | null }) {
-  if (!r.geo) return <p className="hint">Задайте координаты обеих площадок.</p>;
+  if (!r.geo) return <p className="hint">Задайте координаты обоих объектов.</p>;
   const card = (from: string, to: string, az: number, tilt: number) => (
     <div className="azc">
       <Dial az={az} mag={decl} />
@@ -291,7 +351,11 @@ export function Steps({ r, link }: { r: LinkResult; link: Link }) {
         ...row('Потери на объединение', 'на двух концах', fmt(2 * c.ch.combinerLossDb, 1) + ' дБ', c.n + 'omt'),
         ...row('Потери на препятствии', `в плохую погоду ${fmt(c.diffMin, 1)} дБ`, fmt(c.diff, 1) + ' дБ', c.n + 'df'),
         ...row('Затухание в газах', `${fmt(c.gasK, 3)} дБ/км`, fmt(c.gas, 2) + ' дБ', c.n + 'gas'),
-        ...(c.ref ? row(`Сигнал на приёмнике, ${c.ref.name}`, `мощность ${fmt(c.ref.txDbm, 1)} дБм + антенны − потери`, fmt(c.ref.prx, 1) + ' дБм', c.n + 'p') : []),
+        ...(c.refl ? [
+          ...row('Отражение от воды', c.refl.blocked ? `точка на ${fmt(c.refl.d, 2)} км закрыта препятствием` : `на ${fmt(c.refl.d, 2)} км, угол ${fmt(c.refl.psi, 1)} мрад, |Γ| ${fmt(c.refl.gamma, 2)}, расхождение ${fmt(c.refl.divergence, 2)}, волнение ${fmt(c.refl.roughness, 2)}, антенны ${fmt(c.refl.discA + c.refl.discB, 1)} дБ → ρ ${fmt(c.refl.rho, 2)}`, c.refl.blocked ? 'нет' : c.refl.rho < 0.1 ? 'не влияет' : c.refl.loss > 0 ? `−${fmt(c.refl.loss, 1)} дБ` : `+${fmt(-c.refl.loss, 1)} дБ (не учтено)`, c.n + 'wr'),
+          ...(c.refl.blocked || c.refl.rho < 0.1 ? [] : row('Худшее замирание от отражения', `при k = ${fmt(c.refl.kWorst, 2)}; шаг разнесения по высоте A / B ${fmt(c.refl.spacingA, 1)} / ${fmt(c.refl.spacingB, 1)} м`, fmt(c.refl.worst, 1) + ' дБ', c.n + 'ww'))
+        ] : []),
+        ...(c.ref ? row(`Сигнал на приёмнике, ${c.ref.name}`, `мощность ${fmt(c.ref.txDbm, 1)} дБм + антенны − потери${c.refl && c.refl.applied > 0 ? ' − отражение' : ''}`, fmt(c.ref.prx, 1) + ' дБм', c.n + 'p') : []),
         ...row('Запас, нужный для нормы', '', fmt(c.marginRequired, 1) + ' дБ', c.n + 'mr'),
         ...row('Дождь: ослабление в ливень', `${fmt(r.climate.rainR001, 0)} мм/ч, ${fmt(c.rain.gamma, 3)} дБ/км`, fmt(c.rain.A001, 1) + ' дБ', c.n + 'rain')
       ])}

@@ -14,6 +14,7 @@ interface Props {
   onOpenLink(id: string): void;
   onStartLink(): void;
   onFocus(): void;
+  onMove(): void;
 }
 
 function CoordInput({ id, value, isLat, onChange }: { id: string; value: number; isLat: boolean; onChange(v: number): void }) {
@@ -35,21 +36,21 @@ function CoordInput({ id, value, isLat, onChange }: { id: string; value: number;
   );
 }
 
-export function SitePanel({ site, onClose, onDelete, onOpenLink, onStartLink, onFocus }: Props) {
+export function SitePanel({ site, onClose, onDelete, onOpenLink, onStartLink, onFocus, onMove }: Props) {
   const { updateSite, links, sites, results } = useStore();
   const set = (patch: Partial<Site>) => updateSite({ ...site, ...patch });
   const mine = links.filter((l) => l.siteA === site.id || l.siteB === site.id);
   const id = (s: string) => `${site.id}-${s}`;
   return (
-    <aside className="panel" aria-label="Площадка">
+    <aside className="panel" aria-label="Объект">
       <div className="panel-head" style={{ paddingBottom: 12 }}>
         <div className="panel-title">
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div className="eyebrow">Площадка{site.code ? ' · ' + site.code : ''}</div>
+            <div className="eyebrow">Объект{site.code ? ' · ' + site.code : ''}</div>
             <h2>{site.name || 'Без названия'}</h2>
           </div>
           <button className="btn sm" type="button" onClick={onFocus} title="Показать на карте"><Icon name="target" /></button>
-          <button className="btn sm danger" type="button" onClick={onDelete} title="Удалить площадку"><Icon name="trash" /></button>
+          <button className="btn sm danger" type="button" onClick={onDelete} title="Удалить объект"><Icon name="trash" /></button>
           <button className="btn sm ghost" type="button" onClick={onClose} title="Закрыть"><Icon name="close" /></button>
         </div>
       </div>
@@ -62,8 +63,9 @@ export function SitePanel({ site, onClose, onDelete, onOpenLink, onStartLink, on
             <Field label="Широта" htmlFor={id('lat')} hint={formatDms(site.lat, true)}><CoordInput id={id('lat')} value={site.lat} isLat onChange={(v) => set({ lat: v })} /></Field>
             <Field label="Долгота" htmlFor={id('lon')} hint={formatDms(site.lon, false)}><CoordInput id={id('lon')} value={site.lon} isLat={false} onChange={(v) => set({ lon: v })} /></Field>
           </div>
-          <p className="hint">Координаты можно вводить как 56.5486, 56,5486 или 56°32'55.06". Площадку можно перетащить на карте, пока она выбрана.</p>
+          <p className="hint">Координаты можно вводить как 56.5486, 56,5486 или 56°32'55.06". Если точка стоит не там, наведите на неё курсор на карте и нажмите «Изменить положение» (или кнопку ниже), затем перетащите её и сохраните.</p>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button type="button" className="btn sm primary" onClick={onMove}><Icon name="pin" />Изменить положение на карте</button>
             <button type="button" className="btn sm" onClick={() => void openExternal(`https://yandex.ru/maps/?pt=${site.lon},${site.lat}&z=16&l=sat%2Cskl`)}>Яндекс Карты</button>
             <button type="button" className="btn sm" onClick={() => void openExternal(`https://www.openstreetmap.org/?mlat=${site.lat}&mlon=${site.lon}#map=16/${site.lat}/${site.lon}`)}>OpenStreetMap</button>
           </div>

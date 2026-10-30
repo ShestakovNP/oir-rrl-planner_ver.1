@@ -10,6 +10,7 @@ import {
 import { downtime, fmt, ghz, polName } from './format';
 import { buildRecommendations, type Rec } from './recommend';
 import { comparePolarization, type PolarizationResult } from './polarization';
+import { waterReflection, waterShare, type WaterReflection } from './water';
 
 export interface Sample {
   d: number;
@@ -23,6 +24,8 @@ export interface Sample {
   F1: number;
   /** Clearance above top, m. */
   H: number;
+  /** Surface type at this point (b building, f forest, w water). */
+  t?: 'b' | 'f' | 'w';
 }
 export interface Critical extends Sample { rel: number }
 export interface Geometry { s: Sample[]; crit: Critical | null }
@@ -84,6 +87,8 @@ export interface ChannelResult {
   ref: ModeResult | null;
   /** Fade margin needed to meet the availability objective, dB. */
   marginRequired: number;
+  /** Reflection from water on the path (null = no water under the reflection point). */
+  refl: WaterReflection | null;
 }
 
 export type Level = 'ok' | 'warn' | 'bad' | 'info';
@@ -116,6 +121,8 @@ export interface LinkResult {
   verdict: { level: Level; label: string; title: string; sub: string };
   recs: Rec[];
   polarization: PolarizationResult;
+  /** Share of the path over water, 0…1. */
+  water: number;
 }
 
 /** True when channel 2 is enabled and its band overlaps channel 1 (dual-polarization co-channel operation). */
@@ -130,7 +137,12 @@ export function interpolate(pts: ProfilePoint[], d: number): ProfilePoint {
   for (let i = 1; i < pts.length; i++) {
     if (d <= pts[i].d) {
       const a = pts[i - 1], b = pts[i], t = (d - a.d) / (b.d - a.d || 1);
-      return { d, g: a.g + (b.g - a.g) * t, c: a.c + (b.c - a.c) * t };
+      const p: ProfilePoint = { d, g: a.g + (b.g - a.g) * t, c: a.c + (b.c - a.c) * t };
+      let kind = t <= 0.5 ? a.t : b.t;
+      // A ramp between typed clutter and open ground keeps the clutter type.
+      if (!kind && p.c > 0) kind = a.c > 0 ? a.t : b.t;
+      if (kind) p.t = kind;
+      return p;
     }
   }
   return pts[pts.length - 1];
@@ -148,7 +160,7 @@ export function geometry(P: PathModel, k: number, fGHz: number): Geometry {
     const los = HA + ((HB - HA) * d) / D;
     const F1 = d > 0 && d < D ? 17.32 * Math.sqrt((d * (D - d)) / (fGHz * D)) : 0;
     const top = q.g + q.c + bulge;
-    const o: Sample = { d, g: q.g + bulge, top, los, F1, H: los - top };
+    const o: Sample = { d, g: q.g + bulge, top, los, F1, H: los - top, t: q.t };
     if (d > D * 0.005 && d < D * 0.995 && F1 > 0) {
       const rel = o.H / F1;
       if (!crit || rel < crit.rel) crit = { ...o, rel };
@@ -156,6 +168,23 @@ export function geometry(P: PathModel, k: number, fGHz: number): Geometry {
     return o;
   });
   return { s, crit };
+}
+
+export type SurfaceKind = 'b' | 'f' | 'w' | 'c';
+/**
+ * Consecutive runs of the same surface along the samples, for drawing:
+ * b building, f forest, w water, c clutter without a known type (entered by hand).
+ */
+export function surfaceRuns(s: Sample[]): { kind: SurfaceKind; from: number; to: number }[] {
+  const kindOf = (o: Sample): SurfaceKind | null => (o.t === 'w' ? 'w' : o.top - o.g > 0.05 ? (o.t ?? 'c') : null);
+  const runs: { kind: SurfaceKind; from: number; to: number }[] = [];
+  s.forEach((o, i) => {
+    const k = kindOf(o);
+    const last = runs[runs.length - 1];
+    if (k && last && last.kind === k && last.to === i - 1) last.to = i;
+    else if (k) runs.push({ kind: k, from: i, to: i });
+  });
+  return runs;
 }
 
 export function clearanceState(rel: number | null): { level: Level; label: string } {
@@ -168,13 +197,13 @@ export function buildPath(link: Link, A: Site, B: Site, geo: Geodesic | null): {
   const warnings: string[] = [];
   let pts = (link.profile || [])
     .filter((p) => Number.isFinite(p.d) && Number.isFinite(p.g))
-    .map((p) => ({ d: p.d, g: p.g, c: Math.max(0, Number.isFinite(p.c) ? p.c : 0) }))
+    .map((p): ProfilePoint => ({ d: p.d, g: p.g, c: Math.max(0, Number.isFinite(p.c) ? p.c : 0), ...(p.t ? { t: p.t } : {}) }))
     .sort((a, b) => a.d - b.d);
   let D = geo ? geo.km : 0;
   if (pts.length < 2) {
     const gA = A.groundM ?? 0, gB = B.groundM ?? 0;
     pts = [{ d: 0, g: gA, c: 0 }, { d: D, g: gB, c: 0 }];
-    warnings.push('Профиль трассы не задан: считаю ровную землю между площадками. Загрузите профиль по SRTM или введите его вручную.');
+    warnings.push('Профиль трассы не задан: считаю ровную землю между объектами. Загрузите профиль по SRTM или введите его вручную.');
   } else {
     const d0 = pts[0].d;
     pts = pts.map((p) => ({ ...p, d: p.d - d0 }));
@@ -220,11 +249,13 @@ export function calcChannel(ctx: Ctx, ch: Channel, n: 1 | 2, polOverride?: Pol):
   const fixed = gA + gB - link.feederA - link.feederB - link.otherLoss - 2 * ch.combinerLossDb;
   const rain = rainModel(fGHz, D, link.climate.rainR001, pol);
   const c = link.climate;
+  const refl = waterReflection(path, geom.s, k, kMin, fGHz, pol, link.dishA, link.dishB);
+  const reflLoss = refl ? refl.applied : 0;
   const modes: ModeResult[] = ch.modes
     .filter((m) => Number.isFinite(m.txDbm) && Number.isFinite(m.thresholdDbm))
     .map((m) => {
       const degr = Number.isFinite(ci) ? 10 * Math.log10(1 + Math.pow(10, (requiredSnr(m.name) - ci) / 10)) : 0;
-      const prx = m.txDbm + fixed - FSL - diff - gas;
+      const prx = m.txDbm + fixed - FSL - diff - gas - reflLoss;
       const margin = prx - m.thresholdDbm - degr;
       const mpMonth = multipathWorstMonth(D, fGHz, c.dN1, slope, hLow, margin);
       const mpYear = mpMonth * c.monthToYear;
@@ -248,7 +279,7 @@ export function calcChannel(ctx: Ctx, ch: Channel, n: 1 | 2, polOverride?: Pol):
   return {
     n, ch, tag: 'К' + n, label: `${ghz(ch.freqMHz)} · ${polName(pol)}`, fGHz, pol, geom, geomMin, FSL, diff, diffMin, gasK, gas,
     gA, gB, gAcalc, gBcalc, beamA: beamwidth(link.dishA, fGHz), beamB: beamwidth(link.dishB, fGHz), fixed, rain, modes,
-    best, working, top, next, ref: best || working[0] || modes[0] || null, marginRequired: hi
+    best, working, top, next, ref: best || working[0] || modes[0] || null, marginRequired: hi, refl
   };
 }
 
@@ -259,8 +290,8 @@ export function calculateLink(link: Link, A: Site, B: Site): LinkResult {
   if (geoOk) {
     const v = vincenty(A.lat, A.lon, B.lat, B.lon);
     if (v.km > 0.01) geo = v;
-    else errors.push('Площадки совпадают или стоят ближе 10 м друг к другу.');
-  } else errors.push('У площадок не заданы корректные координаты.');
+    else errors.push('Объекты совпадают или стоят ближе 10 м друг к другу.');
+  } else errors.push('У объектов не заданы корректные координаты.');
   const { path, warnings } = buildPath(link, A, B, geo);
   const c = link.climate;
   const k = c.k, kMin = c.kMin;
@@ -322,7 +353,7 @@ export function calculateLink(link: Link, A: Site, B: Site): LinkResult {
   const base: LinkResult = {
     ok: !errors.length, errors, warnings, siteA: A, siteB: B, climate: link.climate, geo, path, k, kMin, geom, geomMin,
     clearance: { rel: geom.crit ? geom.crit.rel : null, ...cs }, tiltA, tiltB, channels: results, multi, coChannel, samePol, xpd,
-    uNorm, totalRate, verdict: { level, label, title, sub }, recs: [], polarization: { channels: [], pair: null }
+    uNorm, totalRate, verdict: { level, label, title, sub }, recs: [], polarization: { channels: [], pair: null }, water: waterShare(path)
   };
   if (!errors.length && results.length) {
     base.polarization = comparePolarization(base, ctx);

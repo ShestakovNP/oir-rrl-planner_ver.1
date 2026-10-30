@@ -5,7 +5,7 @@ import { useStore } from '../state/store';
 import { APP_NAME, APP_VERSION, ORG_FULL, TILE_PROVIDERS } from '../config';
 import { OirMark } from '../brand/Logo';
 import { tileCacheStats } from '../map/tileCache';
-import { Field, parseNum } from './ui';
+import { Field, Icon, parseNum } from './ui';
 
 function Modal({ title, children, onClose, onSubmit, submit, wide }: { title: string; children: ReactNode; onClose(): void; onSubmit?(): void; submit?: string; wide?: boolean }) {
   useEffect(() => {
@@ -38,14 +38,14 @@ export function AddSiteDialog({ onClose, onCreate, initial }: { onClose(): void;
   useEffect(() => ref.current?.focus(), []);
   const submit = () => {
     const la = parseCoord(lat), lo = parseCoord(lon), gr = g.trim() ? parseNum(g) : null;
-    if (!name.trim()) return setErr('Укажите название площадки.');
+    if (!name.trim()) return setErr('Укажите название объекта.');
     if (!Number.isFinite(la) || Math.abs(la) > 90) return setErr('Широта должна быть от −90 до 90.');
     if (!Number.isFinite(lo) || Math.abs(lo) > 180) return setErr('Долгота должна быть от −180 до 180.');
     if (gr != null && !Number.isFinite(gr)) return setErr('Высота земли должна быть числом или пустой.');
     onCreate({ name: name.trim(), code: code.trim(), lat: la, lon: lo, groundM: gr });
   };
   return (
-    <Modal title="Новая площадка" onClose={onClose} onSubmit={submit} submit="Добавить">
+    <Modal title="Новый объект" onClose={onClose} onSubmit={submit} submit="Добавить">
       <div className="grid2">
         <Field label="Название" htmlFor="ns-name" className="span2"><input id="ns-name" ref={ref} className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="например, Шегарка" /></Field>
         <Field label="Широта" htmlFor="ns-lat"><input id="ns-lat" className="input num" value={lat} onChange={(e) => setLat(e.target.value)} placeholder={`56°33'50.19" или 56.5639`} /></Field>
@@ -65,12 +65,12 @@ export function NewLinkDialog({ onClose, onCreate, onPickOnMap, initialA }: { on
   const [b, setB] = useState(sorted.find((s) => s.id !== (initialA ?? sorted[0]?.id))?.id ?? '');
   const [err, setErr] = useState<string | null>(null);
   return (
-    <Modal title="Новый пролёт" onClose={onClose} onSubmit={() => (a && b && a !== b ? onCreate(a, b) : setErr('Выберите две разные площадки.'))} submit="Создать">
+    <Modal title="Новый пролёт" onClose={onClose} onSubmit={() => (a && b && a !== b ? onCreate(a, b) : setErr('Выберите два разных объекта.'))} submit="Создать">
       <div className="grid2">
-        <Field label="Площадка A" htmlFor="nl-a"><select id="nl-a" className="select" value={a} onChange={(e) => setA(e.target.value)}>{sorted.map((s) => <option key={s.id} value={s.id}>{s.name}{s.code ? ` (${s.code})` : ''}</option>)}</select></Field>
-        <Field label="Площадка B" htmlFor="nl-b"><select id="nl-b" className="select" value={b} onChange={(e) => setB(e.target.value)}>{sorted.map((s) => <option key={s.id} value={s.id}>{s.name}{s.code ? ` (${s.code})` : ''}</option>)}</select></Field>
+        <Field label="Объект A" htmlFor="nl-a"><select id="nl-a" className="select" value={a} onChange={(e) => setA(e.target.value)}>{sorted.map((s) => <option key={s.id} value={s.id}>{s.name}{s.code ? ` (${s.code})` : ''}</option>)}</select></Field>
+        <Field label="Объект B" htmlFor="nl-b"><select id="nl-b" className="select" value={b} onChange={(e) => setB(e.target.value)}>{sorted.map((s) => <option key={s.id} value={s.id}>{s.name}{s.code ? ` (${s.code})` : ''}</option>)}</select></Field>
       </div>
-      <p>Можно выбрать площадки прямо на карте: <button type="button" className="btn sm" onClick={onPickOnMap}>Выбрать на карте</button></p>
+      <p>Можно выбрать объекты прямо на карте: <button type="button" className="btn sm" onClick={onPickOnMap}>Выбрать на карте</button></p>
       <p className="hint">Если есть интернет, профиль рельефа загрузится автоматически.</p>
       {err ? <div className="notice">{err}</div> : null}
     </Modal>
@@ -90,7 +90,7 @@ export function AboutDialog({ onClose }: { onClose(): void }) {
       <div className="about-mark"><OirMark size={56} /><div><b>{APP_NAME}</b><div className="hint">{ORG_FULL} · версия {APP_VERSION}</div></div></div>
       <div className="section">
         <h3>Где хранятся данные</h3>
-        <p>Все проекты, площадки, пролёты и справочник хранятся только на этом компьютере, в файле базы данных:</p>
+        <p>Все проекты, объекты, пролёты и справочник хранятся только на этом компьютере, в файле базы данных:</p>
         <p className="mono" style={{ wordBreak: 'break-all', fontSize: 12 }}>{loc}</p>
         <p className="hint">Резервная копия: «Файл» → «Резервная копия всех данных». Восстановить её — «Файл» → «Импорт проекта или копии». Можно также скопировать сам файл базы при закрытой программе.</p>
       </div>
@@ -102,6 +102,64 @@ export function AboutDialog({ onClose }: { onClose(): void }) {
       <div className="section">
         <h3>Методика</h3>
         <p className="hint">МСЭ-R P.525, P.526 (препятствие-нож), P.530 (многолучёвость, дождь), P.838, P.676; геодезия — WGS-84 (Винсенти). Шрифт отчётов — Liberation Sans (SIL OFL 1.1).</p>
+      </div>
+    </Modal>
+  );
+}
+
+/** Bulk removal of projects from the list (the project register). */
+export function ProjectsCleanupDialog({ onClose, onDelete, onDeleteOne }: { onClose(): void; onDelete(ids: string[]): Promise<void>; onDeleteOne(id: string): Promise<void> }) {
+  const { projects, project, settings } = useStore();
+  const fav = new Set(settings.favoriteProjects ?? []);
+  const sorted = projects.slice().sort((a, b) => Number(fav.has(b.id)) - Number(fav.has(a.id)) || b.updatedAt - a.updatedAt);
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [askOne, setAskOne] = useState<string | null>(null);
+  const delOne = async (id: string) => {
+    setAskOne(null);
+    const n2 = new Set(sel); n2.delete(id); setSel(n2); setConfirm(false);
+    await onDeleteOne(id);
+  };
+  const toggle = (id: string) => { const n = new Set(sel); if (n.has(id)) n.delete(id); else n.add(id); setSel(n); setConfirm(false); };
+  const n = sel.size;
+  const word = (k: number) => (k % 10 === 1 && k % 100 !== 11 ? 'проект' : k % 10 >= 2 && k % 10 <= 4 && (k % 100 < 10 || k % 100 >= 20) ? 'проекта' : 'проектов');
+  const run = async () => {
+    if (!n) return;
+    if (!confirm) { setConfirm(true); return; }
+    setBusy(true);
+    try { await onDelete([...sel]); onClose(); } finally { setBusy(false); }
+  };
+  return (
+    <Modal title="Очистить список проектов" onClose={onClose} wide>
+      <p className="hint">Удалите проект кнопкой с корзиной в его строке или отметьте несколько и удалите разом. Удаляются проект, его объекты, пролёты и профили; справочник ППУ и антенн не меняется. Перед удалением можно сохранить копию: «Файл» → «Резервная копия всех данных».</p>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button type="button" className="btn sm" onClick={() => { setSel(new Set(sorted.filter((p) => !fav.has(p.id)).map((p) => p.id))); setConfirm(false); }}>Выбрать все, кроме избранных</button>
+        <button type="button" className="btn sm" onClick={() => { setSel(new Set(sorted.map((p) => p.id))); setConfirm(false); }}>Выбрать все</button>
+        <button type="button" className="btn sm" disabled={!n} onClick={() => { setSel(new Set()); setConfirm(false); }}>Снять выбор</button>
+      </div>
+      <div className="cleanup-list">
+        {sorted.map((p) => (
+          <label key={p.id} className={`cleanup-row ${sel.has(p.id) ? 'on' : ''}`}>
+            <input type="checkbox" checked={sel.has(p.id)} onChange={() => toggle(p.id)} />
+            <span className="nm">{fav.has(p.id) ? <span className="fav" title="Избранный">★</span> : null}{p.name || 'Без названия'}{p.id === project?.id ? <small> · открыт сейчас</small> : null}</span>
+            <span className="dt">изменён {new Date(p.updatedAt).toLocaleDateString('ru-RU')}</span>
+            {askOne === p.id ? (
+              <span className="row-ask" onClick={(e) => e.preventDefault()}>
+                <button type="button" className="btn sm danger-fill" onClick={() => void delOne(p.id)}>Удалить</button>
+                <button type="button" className="btn sm" onClick={() => setAskOne(null)}>Нет</button>
+              </span>
+            ) : (
+              <button type="button" className="btn sm ghost row-del" title="Удалить только этот проект" onClick={(e) => { e.preventDefault(); setAskOne(p.id); }}><Icon name="trash" /></button>
+            )}
+          </label>
+        ))}
+      </div>
+      {confirm ? <div className="notice">Удалить {n} {word(n)} без возможности восстановления? Нажмите «Удалить» ещё раз, чтобы подтвердить.</div> : null}
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <button type="button" className="btn danger" disabled={!n || busy} onClick={() => void run()}>
+          {busy ? 'Удаляю…' : confirm ? `Да, удалить ${n} ${word(n)}` : n ? `Удалить выбранные (${n})` : 'Удалить выбранные'}
+        </button>
       </div>
     </Modal>
   );

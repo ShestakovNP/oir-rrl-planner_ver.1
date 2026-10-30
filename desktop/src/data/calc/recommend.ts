@@ -1,6 +1,7 @@
 /** Plain-language recommendations derived from a LinkResult. Texts use **bold** markers. */
 import { geometry, interpolate, type LinkResult, type Level } from './link';
 import { rainModel } from './physics';
+import { fresnelWater } from './water';
 import { downtime, fmt, ghz } from './format';
 
 export interface Rec {
@@ -59,9 +60,11 @@ export function buildRecommendations(r: LinkResult): Rec[] {
     });
   }
   if (G.crit) {
-    const cc = interpolate(P.pts, G.crit.d).c;
+    const q = interpolate(P.pts, G.crit.d), cc = q.c;
     if (cc > 0)
-      recs.push({ level: 'info', title: 'Узкое место — лес или застройка', text: `На ${fmt(G.crit.d, 1)} км препятствие высотой ${fmt(cc, 0)} м над землёй. Деревья прирастают на 0,3–0,5 м в год, поэтому проверьте высоту при обследовании трассы и заложите 3–5 м запаса по высоте антенн.` });
+      recs.push(q.t === 'b'
+        ? { level: 'info', title: 'Узкое место — здание', text: `На ${fmt(G.crit.d, 1)} км здание высотой ${fmt(cc, 0)} м над землёй. Высота взята из OpenStreetMap или типовая — уточните её на месте и учтите возможную надстройку: заложите 3–5 м запаса по высоте антенн.` }
+        : { level: 'info', title: q.t === 'f' ? 'Узкое место — лес' : 'Узкое место — лес или застройка', text: `На ${fmt(G.crit.d, 1)} км препятствие высотой ${fmt(cc, 0)} м над землёй. Деревья прирастают на 0,3–0,5 м в год, поэтому проверьте высоту при обследовании трассы и заложите 3–5 м запаса по высоте антенн.` });
   }
 
   /* two channels on one antenna */
@@ -126,6 +129,48 @@ export function buildRecommendations(r: LinkResult): Rec[] {
         recs.push({ level: 'warn', title: `${p0}проверьте коэффициент усиления антенны на «${nm}»`, text: `Антенна такого диаметра на ${ghz(c.ch.freqMHz)} обычно имеет КУ около **${fmt(gc, 1)} дБ**, а указано ${fmt(gin, 1)} дБ. Сверьтесь с паспортом: ошибка в КУ напрямую меняет запас.` });
     });
   });
+
+  /* water on the path: reflection, interference, refraction */
+  if (r.water > 0) {
+    const withR = r.channels.filter((c) => c.refl && !c.refl.blocked);
+    const share = Math.round(r.water * 100);
+    if (withR.length) {
+      const c = withR.reduce((a, b) => (b.refl!.worst > a.refl!.worst ? b : a));
+      const w = c.refl!;
+      const p0 = r.multi ? c.tag + ': ' : '';
+      const margin = c.ref ? c.ref.margin : NaN;
+      const level = Number.isFinite(margin) && w.worst >= margin ? 'bad' : w.worst >= 6 ? 'warn' : 'info';
+      if (w.rho < 0.1) {
+        const why: string[] = [];
+        if (w.discA + w.discB < -6) why.push(`отражённый луч приходит под углом и антенны ослабляют его на ${fmt(-(w.discA + w.discB), 0)} дБ`);
+        if (w.roughness < 0.5) why.push('на этой частоте волны на воде рассеивают отражение');
+        if (w.divergence < 0.5) why.push('кривизна Земли рассеивает отражённую волну');
+        recs.push({ level: 'ok', title: `${p0}отражение от воды не мешает`, text: `Луч отражается от водной глади на ${fmt(w.d, 2)} км от «${nameA}», но отражённая волна слабая — ${Math.max(1, Math.round(w.rho * 100))}% от прямой${why.length ? ': ' + why.join(', ') : ''}. Замирания от интерференции не больше ${fmt(Math.max(0, w.worst), 1)} дБ.` });
+      } else {
+      const now = w.loss > 0.05
+        ? `Сейчас (k = ${fmt(k, 2)}) волны частично гасят друг друга: −${fmt(w.loss, 1)} дБ, это уже учтено в уровне сигнала.`
+        : `Сейчас (k = ${fmt(k, 2)}) волны складываются и сигнал выше на ${fmt(-w.loss, 1)} дБ, но этот выигрыш в расчёт не взят: он пропадает при смене погоды.`;
+      const other = c.pol === 'H' ? 'V' : 'H';
+      const gO = Math.hypot(...fresnelWater(c.fGHz, w.psi / 1000, other));
+      const polTip = other === 'V' && gO < w.gamma - 0.02 ? ` Вертикальная поляризация отражается от воды слабее (|Γ| ${fmt(gO, 2)} против ${fmt(w.gamma, 2)}).` : '';
+      recs.push({
+        level, title: `${p0}отражение от воды`,
+        text: `Луч отражается от водной глади на **${fmt(w.d, 2)} км** от «${nameA}» (вода на ${fmt(w.from, 2)}–${fmt(w.to, 2)} км), угол скольжения ${fmt(w.psi, 1)} мрад. Отражённая волна приходит с амплитудой ≈ ${Math.round(w.rho * 100)}% от прямой и интерферирует с ней. ${now} ` +
+          `При изменении рефракции (k от ${fmt(Math.min(kMin, k), 2)} до 3) возможны замирания до **${fmt(w.worst, 1)} дБ**${Number.isFinite(margin) ? ` при запасе ${fmt(margin, 1)} дБ` : ''}. ` +
+          `Что помогает: сделать антенны заметно разными по высоте, чтобы точка отражения ушла на берег, или закрыть её берегом, лесом, строением; разнесённый приём по высоте — вторая антенна на **${fmt(w.spacingB, 1)} м** выше или ниже на «${nameB}» (на «${nameA}» — ${fmt(w.spacingA, 1)} м); антенны с более узким лучом.${polTip}`
+      });
+      }
+    } else if (r.channels.some((c) => c.refl?.blocked)) {
+      recs.push({ level: 'ok', title: 'Отражение от воды закрыто', text: `Точка отражения попадает на воду, но её не видно с одной из антенн: луч к ней перекрывает рельеф или препятствия. Интерференции с отражённой волной не будет.` });
+    } else {
+      recs.push({ level: 'info', title: 'Вода на трассе', text: `Над водой ${share}% трассы, но точка зеркального отражения приходится на сушу, где отражение рассеивается. Если уровень воды сезонно меняется (паводок, водохранилище), перепроверьте расчёт.` });
+    }
+    if (r.water >= 0.1)
+      recs.push({
+        level: 'info', title: 'Рефракция над водой',
+        text: `Над водой (${share}% трассы) чаще бывают приземные волноводы и сверхрефракция: в штиль, летом, утром и вечером, когда воздух над водой холоднее. Луч то прижимается к воде, то уходит вверх, поэтому многолучёвые замирания сильнее, чем в быстром методе МСЭ-R P.530, на котором основан расчёт. Заложите дополнительные 5–10 дБ запаса или разнесённый приём; для оценки можно задать градиент рефракции dN1 более отрицательным (−500…−600) во вкладке «Исходные данные».`
+      });
+  }
 
   if (r.geo) {
     const lv = r.channels.filter((c) => c.ref).map((c) => `**${fmt(c.ref!.prx, 0)} дБм**${r.multi ? ' в ' + c.tag : ''}`).join(', ');

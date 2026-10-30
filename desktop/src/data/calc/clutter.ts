@@ -1,17 +1,20 @@
 /**
- * Merging buildings and forest into the terrain profile. Pure geometry, no
- * network: the objects come from net/clutter.ts (OpenStreetMap).
+ * Merging buildings, forest and water surfaces into the terrain profile. Pure
+ * geometry, no network: the objects come from net/clutter.ts (OpenStreetMap).
  */
 import { intermediate, rad, vincenty } from './geo';
 import type { ProfilePoint } from '../types';
 
 export interface ClutterObject {
-  kind: 'building' | 'forest';
+  kind: 'building' | 'forest' | 'water';
   height: number;
   /** true when the height came from OSM tags, false when estimated. */
   measured: boolean;
   ring: [number, number][];
   bbox: [number, number, number, number];
+  /** Rivers mapped as a centre line: the ring is a polyline and `width` is the river width, m. */
+  line?: boolean;
+  width?: number;
 }
 
 export interface ClutterOptions {
@@ -25,6 +28,9 @@ export interface ClutterResult {
   buildings: number;
   buildingsMeasured: number;
   forests: number;
+  waters: number;
+  /** Share of the path length over water, 0..1. */
+  waterShare: number;
   /** Share of the path length covered by obstacles, 0..1. */
   coverage: number;
   summary: string;
@@ -44,9 +50,9 @@ function inside(p: [number, number], poly: [number, number][]): boolean {
   }
   return c;
 }
-function distToPoly(p: [number, number], poly: [number, number][]): number {
+function distToPoly(p: [number, number], poly: [number, number][], closed = true): number {
   let best = Infinity;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+  for (let i = closed ? 0 : 1, j = closed ? poly.length - 1 : 0; i < poly.length; j = i++) {
     const [ax, ay] = poly[j], [bx, by] = poly[i];
     const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy || 1;
     const t = Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / L));
@@ -69,21 +75,28 @@ export function applyClutter(
   const half = opts.halfWidth ?? 15;
   const stepKm = Math.max(0.005, Math.min(0.02, D / 3000));
   const n = Math.max(2, Math.round(D / stepKm) + 1);
-  const cAt: number[] = [], usedB = new Set<number>(), usedF = new Set<number>();
+  const cAt: number[] = [], tAt: ('b' | 'f' | 'w' | undefined)[] = [];
+  const usedB = new Set<number>(), usedF = new Set<number>(), usedW = new Set<number>();
   for (let i = 0; i < n; i++) {
     const t = i / (n - 1);
     const [la, lo] = intermediate(lat1, lon1, lat2, lon2, t);
     const p = toXY(la, lo);
-    let c = 0;
+    let c = 0, kind: 'b' | 'f' | 'w' | undefined;
     shapes.forEach((s, k) => {
       if (la < s.bbox[0] - 0.001 || la > s.bbox[2] + 0.001 || lo < s.bbox[1] - 0.002 || lo > s.bbox[3] + 0.002) return;
-      const hit = inside(p, s.xy) || (s.kind === 'building' && distToPoly(p, s.xy) <= half);
-      if (hit && s.height > c) c = s.height;
-      if (hit) (s.kind === 'building' ? usedB : usedF).add(k);
+      let hit: boolean;
+      if (s.line) hit = distToPoly(p, s.xy, false) <= (s.width ?? 30) / 2;
+      else hit = inside(p, s.xy) || (s.kind === 'building' && distToPoly(p, s.xy) <= half);
+      if (!hit) return;
+      if (s.kind === 'water') { usedW.add(k); if (!kind) kind = 'w'; return; }
+      (s.kind === 'building' ? usedB : usedF).add(k);
+      if (s.height > c) { c = s.height; kind = s.kind === 'building' ? 'b' : 'f'; }
     });
     // keep 50 m around each antenna free: the masts themselves stand there
     const dKm = t * D;
-    cAt.push(dKm < 0.05 || dKm > D - 0.05 ? 0 : c);
+    const nearMast = dKm < 0.05 || dKm > D - 0.05;
+    cAt.push(nearMast ? 0 : c);
+    tAt.push(nearMast && kind !== 'w' ? undefined : kind);
   }
   // ground from the existing profile (scaled to the geodesic length)
   const base = profile.length >= 2 ? profile : [{ d: 0, g: 0, c: 0 }, { d: D, g: 0, c: 0 }];
@@ -95,27 +108,34 @@ export function applyClutter(
     return base[base.length - 1].g;
   };
   const out: ProfilePoint[] = [];
-  const push = (d: number, c: number) => out.push({ d: +d.toFixed(4), g: Math.round(gAt(d) * 10) / 10, c: Math.round(c * 10) / 10 });
+  const push = (d: number, c: number, t: 'b' | 'f' | 'w' | undefined) => {
+    const p: ProfilePoint = { d: +d.toFixed(4), g: Math.round(gAt(d) * 10) / 10, c: Math.round(c * 10) / 10 };
+    if (t) p.t = t;
+    out.push(p);
+  };
   const terrainD = new Set(base.map((p) => +((p.d / Dp) * D).toFixed(4)));
-  let covered = 0;
+  let covered = 0, wet = 0;
   for (let i = 0; i < n; i++) {
     const d = (i / (n - 1)) * D;
     if (cAt[i] > 0) covered++;
-    const changed = i === 0 || i === n - 1 || cAt[i] !== cAt[i - 1];
-    if (changed && i > 0) push(Math.max(0, d - 0.001), cAt[i - 1]);
-    if (changed || terrainD.has(+d.toFixed(4)) || i % Math.max(1, Math.round(n / 300)) === 0) push(d, cAt[i]);
+    if (tAt[i] === 'w') wet++;
+    const changed = i === 0 || i === n - 1 || cAt[i] !== cAt[i - 1] || tAt[i] !== tAt[i - 1];
+    if (changed && i > 0) push(Math.max(0, d - 0.001), cAt[i - 1], tAt[i - 1]);
+    if (changed || terrainD.has(+d.toFixed(4)) || i % Math.max(1, Math.round(n / 300)) === 0) push(d, cAt[i], tAt[i]);
   }
   const dedup = out.filter((p, i) => i === 0 || p.d > out[i - 1].d);
-  const buildings = usedB.size, forests = usedF.size;
+  const buildings = usedB.size, forests = usedF.size, waters = usedW.size;
+  const waterShare = wet / n;
   const measured = [...usedB].filter((k) => shapes[k].measured).length;
   const coverage = covered / n;
   const parts: string[] = [];
   if (buildings) parts.push(`зданий: ${buildings}${buildings ? ` (высота из OSM у ${measured}, у остальных — типовая по виду здания)` : ''}`);
   if (forests) parts.push(`лесных массивов: ${forests} (высота леса ${opts.forestHeight} м)`);
+  if (waters) parts.push(`водных объектов: ${waters} (${Math.round(waterShare * 100)} % длины пролёта над водой)`);
   const summary = parts.length
-    ? `На трассе найдено ${parts.join(', ')}. Препятствия занимают ${Math.round(coverage * 100)} % длины пролёта.`
-    : 'На трассе по данным OpenStreetMap нет зданий и лесных массивов.';
-  return { profile: dedup, buildings, buildingsMeasured: measured, forests, coverage, summary };
+    ? `На трассе найдено ${parts.join(', ')}.${buildings || forests ? ` Здания и лес занимают ${Math.round(coverage * 100)} % длины пролёта.` : ''}`
+    : 'На трассе по данным OpenStreetMap нет зданий, лесных массивов и водоёмов.';
+  return { profile: dedup, buildings, buildingsMeasured: measured, forests, waters, waterShare, coverage, summary };
 }
 
 /* ---------- OpenStreetMap (Overpass) answer parsing ---------- */
@@ -177,16 +197,27 @@ function rings(el: OsmEl): [number, number][][] {
 /** Converts an Overpass JSON answer into obstacles with heights. */
 export function parseOverpass(data: { elements?: OsmEl[] }, opts: ClutterOptions): ClutterObject[] {
   const objs: ClutterObject[] = [];
+  const bbox = (ring: [number, number][]): [number, number, number, number] => {
+    const lats = ring.map((p) => p[0]), lons = ring.map((p) => p[1]);
+    return [Math.min(...lats), Math.min(...lons), Math.max(...lats), Math.max(...lons)];
+  };
   for (const el of data.elements || []) {
     const tags = el.tags || {};
     const isBuilding = !!tags.building && tags.building !== 'no';
     const isForest = tags.landuse === 'forest' || tags.natural === 'wood';
-    if (!isBuilding && !isForest) continue;
-    const hh = isBuilding ? buildingHeight(tags) : { h: opts.forestHeight, measured: false };
-    for (const ring of rings(el)) {
-      const lats = ring.map((p) => p[0]), lons = ring.map((p) => p[1]);
-      objs.push({ kind: isBuilding ? 'building' : 'forest', height: hh.h, measured: hh.measured, ring, bbox: [Math.min(...lats), Math.min(...lons), Math.max(...lats), Math.max(...lons)] });
+    const isWaterArea = tags.natural === 'water' || tags.waterway === 'riverbank' || tags.landuse === 'reservoir' || tags.landuse === 'basin';
+    const isRiverLine = el.type === 'way' && (tags.waterway === 'river' || tags.waterway === 'canal');
+    if (isRiverLine && el.geometry && el.geometry.length >= 2) {
+      // a river drawn as a line: use its width tag, otherwise a typical width
+      const ring = el.geometry.map((g) => [g.lat, g.lon] as [number, number]);
+      const w = num(tags.width) || (tags.waterway === 'canal' ? 15 : 40);
+      objs.push({ kind: 'water', height: 0, measured: false, ring, bbox: bbox(ring), line: true, width: w });
+      continue;
     }
+    if (!isBuilding && !isForest && !isWaterArea) continue;
+    const kind: ClutterObject['kind'] = isBuilding ? 'building' : isForest ? 'forest' : 'water';
+    const hh = isBuilding ? buildingHeight(tags) : isForest ? { h: opts.forestHeight, measured: false } : { h: 0, measured: false };
+    for (const ring of rings(el)) objs.push({ kind, height: hh.h, measured: hh.measured, ring, bbox: bbox(ring) });
   }
   return objs;
 }

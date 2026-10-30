@@ -1,5 +1,5 @@
 /** Detail panel of one link: results, inputs, terrain profile and full calculation. */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Channel, Climate, Link, ModMode, ProfilePoint } from '../data/types';
 import { channelsShareFrequency, type LinkResult } from '../data/calc/link';
 import { dishGain } from '../data/calc/physics';
@@ -25,6 +25,9 @@ interface Props {
 export function LinkPanel({ link, result, onClose, onDelete, onReport, onFocus, notify }: Props) {
   const { sites, updateLink } = useStore();
   const [tab, setTab] = useState<Tab>('result');
+  const body = useRef<HTMLDivElement>(null);
+  // Each tab opens from the top, not at the scroll position of the previous tab.
+  useLayoutEffect(() => { if (body.current) body.current.scrollTop = 0; }, [tab, link.id]);
   const A = sites.find((s) => s.id === link.siteA), B = sites.find((s) => s.id === link.siteB);
   const set = (patch: Partial<Link>) => updateLink({ ...link, ...patch });
   const tabs: [Tab, string][] = [['result', 'Итог'], ['input', 'Исходные данные'], ['profile', 'Профиль'], ['detail', 'Подробно']];
@@ -46,13 +49,13 @@ export function LinkPanel({ link, result, onClose, onDelete, onReport, onFocus, 
           {tabs.map(([k, t]) => <button key={k} role="tab" type="button" aria-selected={tab === k} onClick={() => setTab(k)}>{t}</button>)}
         </div>
       </div>
-      <div className="panel-body">
-        {!A || !B ? <div className="notice">Одна из площадок пролёта удалена.</div> : null}
+      <div className="panel-body" ref={body}>
+        {!A || !B ? <div className="notice">Один из объектов пролёта удалён.</div> : null}
         {result && tab === 'result' ? (
           <>
             <Verdict r={result} />
             <div className="section"><h3>Рекомендации</h3><Recommendations r={result} /></div>
-            <div className="section"><h3>Профиль трассы <span className="hint">наведите курсор на график или на линию пролёта на карте</span></h3><ProfileChart r={result} linkId={link.id} /></div>
+            <div className="section"><h3>Профиль трассы <span className="hint">наведите курсор на график или на линию пролёта на карте</span></h3><ProfileChart r={result} linkId={link.id} notify={notify} /></div>
             <div className="section"><h3>Направление антенн <span className="hint">азимут от севера по часовой стрелке</span></h3><Azimuths r={result} decl={link.declination} /></div>
           </>
         ) : null}
@@ -98,7 +101,7 @@ function Inputs({ link, set }: { link: Link; set(p: Partial<Link>): void }) {
   return (
     <>
       <div className="section">
-        <h3>Площадки и подвес антенн</h3>
+        <h3>Объекты и подвес антенн</h3>
         <div className="grid2">
           <div className="sub">{A?.name ?? 'A'}</div><div className="sub">{B?.name ?? 'B'}</div>
           <Field label="Высота подвеса, м" htmlFor={id('hA')} hint="над землёй"><NumField id={id('hA')} value={link.hA} min={0} onChange={(v) => set({ hA: v ?? 0 })} /></Field>
@@ -220,8 +223,10 @@ function ChannelEditor({ i, link, ch, setCh }: { i: 0 | 1; link: Link; ch: Chann
 
 /* ---------------- profile ---------------- */
 
+const TYPE_OUT: Record<string, string> = { b: 'З', f: 'Л', w: 'В' };
+const TYPE_IN: Record<string, 'b' | 'f' | 'w'> = { 'з': 'b', 'b': 'b', 'л': 'f', 'f': 'f', 'в': 'w', 'w': 'w' };
 const fmtPts = (pts: ProfilePoint[]) =>
-  pts.map((p) => `${p.d.toFixed(3).replace('.', ',')}; ${(+p.g.toFixed(1)).toString().replace('.', ',')}; ${(+p.c.toFixed(1)).toString().replace('.', ',')}`).join('\n');
+  pts.map((p) => `${p.d.toFixed(3).replace('.', ',')}; ${(+p.g.toFixed(1)).toString().replace('.', ',')}; ${(+p.c.toFixed(1)).toString().replace('.', ',')}${p.t ? '; ' + TYPE_OUT[p.t] : ''}`).join('\n');
 
 function parsePts(text: string): { pts: ProfilePoint[]; bad: number[] } {
   const pts: ProfilePoint[] = [], bad: number[] = [];
@@ -229,9 +234,13 @@ function parsePts(text: string): { pts: ProfilePoint[]; bad: number[] } {
     const s = line.trim();
     if (!s || !/^[-+\d.,]/.test(s)) return;
     const parts = /[;\t]/.test(s) ? s.split(/[;\t]+/) : /\s/.test(s) ? s.split(/\s+/) : s.split(',');
-    const v = parts.map((x) => x.trim()).filter(Boolean).map(parseNum);
+    const raw = parts.map((x) => x.trim()).filter(Boolean);
+    const tk = raw.length > 2 ? TYPE_IN[raw[raw.length - 1].toLowerCase()[0]] : undefined;
+    const v = (tk ? raw.slice(0, -1) : raw).map(parseNum);
     if (v.length < 2 || !Number.isFinite(v[0]) || !Number.isFinite(v[1])) { bad.push(i + 1); return; }
-    pts.push({ d: v[0], g: v[1], c: Number.isFinite(v[2]) ? Math.max(0, v[2]) : 0 });
+    const pt: ProfilePoint = { d: v[0], g: v[1], c: Number.isFinite(v[2]) ? Math.max(0, v[2]) : 0 };
+    if (tk) pt.t = tk;
+    pts.push(pt);
   });
   pts.sort((a, b) => a.d - b.d);
   return { pts, bad };
@@ -258,9 +267,9 @@ function ProfileTab({ link, result, set, notify }: { link: Link; result: LinkRes
         base = await fetchTerrainProfile(A.lat, A.lon, B.lat, B.lon, (d, t) => setProgress(0.1 + 0.4 * (d / t)));
         Object.assign(patch, { profileSource: 'srtm', profileFetchedAt: Date.now() });
       } else {
-        base = base.map((p) => ({ ...p, c: 0 }));
+        base = base.map((p) => ({ d: p.d, g: p.g, c: 0 }));
       }
-      setBusy('Ищу здания и лес на трассе (OpenStreetMap)…'); setProgress(0.6);
+      setBusy('Ищу здания, лес и водоёмы на трассе (OpenStreetMap)…'); setProgress(0.6);
       const objs = await fetchClutterObjects(A.lat, A.lon, B.lat, B.lon, { forestHeight: forestH });
       setProgress(0.9);
       const res = applyClutter(base, A.lat, A.lon, B.lat, B.lon, objs, { forestHeight: forestH });
@@ -270,7 +279,7 @@ function ProfileTab({ link, result, set, notify }: { link: Link; result: LinkRes
       notify(res.summary);
     } catch (e) {
       if (patch.profileSource) { set({ ...patch, profile: base }); setText(fmtPts(base)); }
-      notify(`${(e as Error).message || 'Не удалось загрузить данные.'}${patch.profileSource ? ' Рельеф загружен, здания и лес — нет: повторите позже или задайте их вручную.' : ''}`, true);
+      notify(`${(e as Error).message || 'Не удалось загрузить данные.'}${patch.profileSource ? ' Рельеф загружен, здания, лес и вода — нет: повторите позже или задайте их вручную.' : ''}`, true);
     } finally {
       setBusy(null); setProgress(0);
     }
@@ -290,23 +299,23 @@ function ProfileTab({ link, result, set, notify }: { link: Link; result: LinkRes
   const date = (t?: number | null) => (t ? new Date(t).toLocaleDateString('ru-RU') : '');
   return (
     <>
-      {result ? <ProfileChart r={result} height={240} linkId={link.id} /> : null}
+      {result ? <ProfileChart r={result} height={240} linkId={link.id} notify={notify} /> : null}
       <div className="section">
-        <h3>Рельеф, здания и лес с карты</h3>
-        <p className="hint">Высоты земли — из открытой базы SRTM 30 м (OpenTopoData). Здания и лесные массивы на трассе — из OpenStreetMap (Overpass API): высота здания берётся из карты (высота или этажность), если её нет — типовая для вида здания; для леса — высота, указанная ниже. Ключи не нужны. После загрузки всё хранится в программе и работает без интернета.</p>
+        <h3>Рельеф, здания, лес и вода с карты</h3>
+        <p className="hint">Высоты земли — из открытой базы SRTM 30 м (OpenTopoData). Здания, лесные массивы и водоёмы (реки, озёра, водохранилища) на трассе — из OpenStreetMap (Overpass API): высота здания берётся из карты (высота или этажность), если её нет — типовая для вида здания; для леса — высота, указанная ниже. Над водой рассчитывается отражение луча от водной глади (см. «Подробно»). Ключи не нужны. После загрузки всё хранится в программе и работает без интернета.</p>
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-          <button type="button" className="btn primary" onClick={() => void loadAll(true)} disabled={!!busy}><Icon name="mountain" />{link.profileSource === 'srtm' ? 'Загрузить заново' : 'Загрузить рельеф, здания и лес'}</button>
-          <button type="button" className="btn" onClick={() => void loadAll(false)} disabled={!!busy || link.profile.length < 2} title="Рельеф не трогать, обновить только здания и лес">Обновить только здания и лес</button>
+          <button type="button" className="btn primary" onClick={() => void loadAll(true)} disabled={!!busy}><Icon name="mountain" />{link.profileSource === 'srtm' ? 'Загрузить заново' : 'Загрузить рельеф, здания, лес и воду'}</button>
+          <button type="button" className="btn" onClick={() => void loadAll(false)} disabled={!!busy || link.profile.length < 2} title="Рельеф не трогать, обновить только здания, лес и воду">Обновить только здания, лес и воду</button>
           <Field label="Высота леса, м" htmlFor={`${link.id}-fh`}><NumField id={`${link.id}-fh`} value={forestH} min={0} max={60} onChange={(v) => set({ forestHeight: v ?? 20 })} /></Field>
         </div>
         {busy ? <><div className="hint">{busy}</div><div className="progress" aria-label={busy}><div style={{ width: `${Math.max(8, progress * 100)}%` }} /></div></> : null}
         <div className="kv">
           <div className="t">Рельеф</div>
           <div className="r" style={{ fontFamily: 'var(--f-ui)' }}>{link.profileSource === 'srtm' ? `SRTM, ${date(link.profileFetchedAt)}` : link.profileSource === 'manual' ? 'введён вручную' : 'не задан'}</div>
-          <div className="t">Здания и лес<small>{link.clutterSummary || ''}</small></div>
+          <div className="t">Здания, лес, вода<small>{link.clutterSummary || ''}</small></div>
           <div className="r" style={{ fontFamily: 'var(--f-ui)' }}>{link.clutterSource === 'osm' ? `OpenStreetMap, ${date(link.clutterFetchedAt)}` : link.clutterSource === 'manual' ? 'вручную' : 'не заданы'}</div>
         </div>
-        <p className="hint">Данные OpenStreetMap бывают неполными: в сёлах и на окраинах часть зданий и лесов может быть не нанесена. Сверяйте с обследованием трассы и при необходимости правьте вручную.</p>
+        <p className="hint">Данные OpenStreetMap бывают неполными: в сёлах и на окраинах часть зданий, лесов и мелких водоёмов может быть не нанесена. Сверяйте с обследованием трассы и при необходимости правьте вручную.</p>
       </div>
       <details className="section">
         <summary className="sub" style={{ cursor: 'pointer' }}>Задать препятствия вручную</summary>
@@ -314,10 +323,10 @@ function ProfileTab({ link, result, set, notify }: { link: Link; result: LinkRes
           <Field label="Высота по всей трассе, м" htmlFor={`${link.id}-cl`}><NumField id={`${link.id}-cl`} value={clutter} nullable min={0} onChange={setClutter} /></Field>
           <button type="button" className="btn" onClick={fillClutter} disabled={link.profile.length < 2}>Применить ко всем точкам</button>
         </div>
-        <p className="hint">Кроме 50 м у каждой площадки. Отдельные участки правьте в таблице ниже (третье число в строке).</p>
+        <p className="hint">Кроме 50 м у каждого объекта. Отдельные участки правьте в таблице ниже (третье число в строке).</p>
       </details>
       <div className="section">
-        <h3>Точки профиля <span className="hint">расстояние, км; земля, м; здания/лес, м</span></h3>
+        <h3>Точки профиля <span className="hint">расстояние, км; земля, м; высота препятствия, м; тип: З — здание, Л — лес, В — вода (необязательно)</span></h3>
         <textarea id={`${link.id}-profile`} className="textarea" rows={12} spellCheck={false} value={text} onChange={(e) => applyText(e.target.value)} aria-label="Точки профиля" />
         {parsed.bad.length ? <div className="notice">Не прочитаны строки: {parsed.bad.slice(0, 8).join(', ')}. Они пропущены.</div> : null}
         <p className="hint">Можно вставить столбцы из Excel или DRRL. Первая точка — «{A.name}», последняя — «{B.name}». Если длина профиля не совпадает с расстоянием по координатам, профиль растягивается.</p>

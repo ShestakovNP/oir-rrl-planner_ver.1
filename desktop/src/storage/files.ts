@@ -14,7 +14,8 @@ export async function saveFile(defaultName: string, data: Uint8Array | string, f
     else await fs.writeFile(path, data);
     return path;
   }
-  const type = filters[0]?.extensions[0] === 'pdf' ? 'application/pdf' : 'application/octet-stream';
+  const ext = filters[0]?.extensions[0];
+  const type = ext === 'pdf' ? 'application/pdf' : ext === 'png' ? 'image/png' : ext === 'jpg' ? 'image/jpeg' : 'application/octet-stream';
   const blob = new Blob([typeof data === 'string' ? data : (data as BlobPart)], { type });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

@@ -52,6 +52,8 @@ export interface ProfilePoint {
   g: number;
   /** Clutter (forest, buildings) above ground, m. */
   c: number;
+  /** What is at this point: b = building, f = forest, w = water surface; absent = open ground. */
+  t?: 'b' | 'f' | 'w';
 }
 
 export interface Climate {

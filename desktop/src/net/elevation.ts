@@ -21,7 +21,7 @@ export async function fetchTerrainProfile(
   onProgress?: (done: number, total: number) => void
 ): Promise<ProfilePoint[]> {
   const D = vincenty(lat1, lon1, lat2, lon2).km;
-  if (!(D > 0)) throw new Error('Площадки совпадают.');
+  if (!(D > 0)) throw new Error('Объекты совпадают.');
   const n = Math.max(50, Math.min(300, Math.round((D * 1000) / 30) + 1));
   const pts: { d: number; lat: number; lon: number }[] = [];
   for (let i = 0; i < n; i++) {

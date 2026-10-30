@@ -21,7 +21,10 @@ const P: Record<string, string> = {
   moon: 'M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7z',
   info: 'M8 14.5a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13zM8 7.5v4M8 5h.01',
   menu: 'M2.5 4h11M2.5 8h11M2.5 12h11',
-  edit: 'M10.5 2.5l3 3L6 13H3v-3z'
+  edit: 'M10.5 2.5l3 3L6 13H3v-3z',
+  star: 'M8 1.8l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6z',
+  check: 'M3 8.5l3.2 3.2L13 4.8',
+  chevron: 'M4 6l4 4 4-4'
 };
 export function Icon({ name, className = 'icon' }: { name: keyof typeof P | string; className?: string }) {
   return (

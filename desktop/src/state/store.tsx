@@ -12,8 +12,10 @@ export interface Settings {
   theme: Theme;
   mapView: { center: [number, number]; zoom: number };
   lastProjectId: string | null;
+  /** Pinned projects shown on top of the project list (up to 5). */
+  favoriteProjects: string[];
 }
-const DEFAULT_SETTINGS: Settings = { providerId: 'osm', theme: 'system', mapView: { center: [56.5, 84.9], zoom: 8 }, lastProjectId: null };
+const DEFAULT_SETTINGS: Settings = { providerId: 'osm', theme: 'system', mapView: { center: [56.5, 84.9], zoom: 8 }, lastProjectId: null, favoriteProjects: [] };
 
 export interface Store {
   repo: Repo;
@@ -29,6 +31,8 @@ export interface Store {
   createProject(name: string): Promise<Project>;
   updateProject(p: Project): Promise<void>;
   deleteProject(id: string): Promise<void>;
+  /** Removes several projects at once; opens a remaining one if the current project was removed. */
+  deleteProjects(ids: string[]): Promise<void>;
   addSite(data: Omit<Site, 'id' | 'projectId'>): Promise<Site>;
   updateSite(s: Site): void;
   deleteSite(id: string): Promise<void>;
@@ -180,6 +184,19 @@ export function StoreProvider({ children, fallback }: { children: ReactNode; fal
       const rest = projects.filter((p) => p.id !== id);
       setProjects(rest);
       if (id === projectId) await loadProject(repo, rest[0]?.id ?? null);
+      if ((settings.favoriteProjects ?? []).includes(id)) setSetting('favoriteProjects', settings.favoriteProjects.filter((x) => x !== id));
+    },
+    async deleteProjects(ids) {
+      const drop = new Set(ids);
+      for (const id of ids) await repo.deleteProject(id);
+      const rest = projects.filter((p) => !drop.has(p.id));
+      setProjects(rest);
+      setSetting('favoriteProjects', (settings.favoriteProjects ?? []).filter((x) => !drop.has(x)));
+      if (projectId && drop.has(projectId)) {
+        const next = rest.slice().sort((a, b) => b.updatedAt - a.updatedAt)[0]?.id ?? null;
+        await loadProject(repo, next);
+        setSetting('lastProjectId', next);
+      }
     },
     async addSite(data) {
       if (!project) throw new Error('Сначала создайте проект.');

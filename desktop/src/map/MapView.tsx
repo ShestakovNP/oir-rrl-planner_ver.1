@@ -37,7 +37,11 @@ interface Props {
   focus: FocusRequest | null;
   onMapClick(lat: number, lon: number): void;
   onSiteClick(id: string): void;
-  onSiteMoved(id: string, lat: number, lon: number): void;
+  /** Site whose position is being edited (draggable), and its not yet saved position. */
+  movingSiteId: string | null;
+  moveDraft: { lat: number; lon: number } | null;
+  onStartMove(id: string): void;
+  onMoveDraft(lat: number, lon: number): void;
   onLinkClick(id: string): void;
   onView(center: [number, number], zoom: number): void;
   initialView: { center: [number, number]; zoom: number };
@@ -53,6 +57,8 @@ export function MapView(p: Props) {
   const base = useRef<L.TileLayer | null>(null);
   const siteLayer = useRef<L.LayerGroup | null>(null);
   const linkLayer = useRef<L.LayerGroup | null>(null);
+  const popup = useRef<L.Popup | null>(null);
+  const popTimer = useRef<number | null>(null);
   const cb = useRef(p);
   cb.current = p;
 
@@ -103,35 +109,86 @@ export function MapView(p: Props) {
   useEffect(() => {
     el.current?.classList.toggle('map-adding', p.mode === 'add-site');
     el.current?.classList.toggle('map-picking', p.mode === 'pick-link');
-  }, [p.mode]);
+    el.current?.classList.toggle('map-moving', !!p.movingSiteId);
+  }, [p.mode, p.movingSiteId]);
+
+  /* hover card over a site: name, coordinates and «Изменить положение» */
+  const closePop = () => {
+    if (popTimer.current) { window.clearTimeout(popTimer.current); popTimer.current = null; }
+    if (popup.current && map.current) map.current.closePopup(popup.current);
+    popup.current = null;
+  };
+  const scheduleClose = () => {
+    if (popTimer.current) window.clearTimeout(popTimer.current);
+    popTimer.current = window.setTimeout(closePop, 450);
+  };
+  const keepOpen = () => { if (popTimer.current) { window.clearTimeout(popTimer.current); popTimer.current = null; } };
+  const openPop = (s: Site) => {
+    const m = map.current;
+    if (!m) return;
+    keepOpen();
+    if (popup.current && (popup.current as unknown as { _siteId?: string })._siteId === s.id) return;
+    closePop();
+    const box = document.createElement('div');
+    box.className = 'site-pop-body';
+    box.innerHTML = `<b>${esc(s.name || 'Без названия')}</b>${s.code ? `<span class="code">${esc(s.code)}</span>` : ''}<span class="coords">${s.lat.toFixed(6)}, ${s.lon.toFixed(6)}</span>`;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn sm primary';
+    btn.innerHTML = '<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5v13M1.5 8h13M8 1.5 6 3.5M8 1.5l2 2M8 14.5l-2-2M8 14.5l2-2M1.5 8l2-2M1.5 8l2 2M14.5 8l-2-2M14.5 8l-2 2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Изменить положение';
+    btn.title = 'Перетащить точку объекта на карте в нужное место';
+    btn.addEventListener('click', (e) => { e.stopPropagation(); closePop(); cb.current.onStartMove(s.id); });
+    box.appendChild(btn);
+    box.addEventListener('mouseenter', keepOpen);
+    box.addEventListener('mouseleave', scheduleClose);
+    const pp = L.popup({ closeButton: false, autoPan: false, offset: [0, -6], className: 'site-pop', closeOnClick: true })
+      .setLatLng([s.lat, s.lon]).setContent(box);
+    (pp as unknown as { _siteId?: string })._siteId = s.id;
+    pp.openOn(m);
+    popup.current = pp;
+  };
 
   /* sites */
   useEffect(() => {
     const layer = siteLayer.current;
     if (!layer) return;
     layer.clearLayers();
+    closePop();
     p.sites.forEach((s) => {
       if (!Number.isFinite(s.lat) || !Number.isFinite(s.lon)) return;
       const sel = s.id === p.selectedSiteId;
       const pend = s.id === p.pendingLinkSiteId;
+      const moving = s.id === p.movingSiteId;
+      const pos: [number, number] = moving && p.moveDraft ? [p.moveDraft.lat, p.moveDraft.lon] : [s.lat, s.lon];
+      if (moving && p.moveDraft) {
+        // where the site was: dashed ring and a thin line to the new place
+        L.circleMarker([s.lat, s.lon], { radius: 7, color: '#d4891c', weight: 2, dashArray: '3 3', fillOpacity: 0, interactive: false }).addTo(layer);
+        L.polyline([[s.lat, s.lon], pos], { color: '#d4891c', weight: 1.5, dashArray: '4 4', interactive: false }).addTo(layer);
+      }
       const icon = L.divIcon({
-        className: 'site-icon',
-        html: `<div class="site-pin${sel ? ' is-selected' : ''}${pend ? ' is-pending' : ''}"></div><div class="site-label">${esc(s.name)}${s.code ? `<small>${esc(s.code)}</small>` : ''}</div>`,
+        className: 'site-icon' + (moving ? ' is-moving' : ''),
+        html: `<div class="site-pin${sel ? ' is-selected' : ''}${pend ? ' is-pending' : ''}${moving ? ' is-moving' : ''}"></div><div class="site-label">${esc(s.name)}${s.code ? `<small>${esc(s.code)}</small>` : ''}</div>`,
         iconSize: [16, 16],
         iconAnchor: [8, 8]
       });
-      const mk = L.marker([s.lat, s.lon], { icon, draggable: sel && p.mode === 'view', keyboard: true, title: s.name, riseOnHover: true, autoPan: true });
+      const mk = L.marker(pos, { icon, draggable: moving, keyboard: true, title: moving ? 'Перетащите точку в нужное место' : '', riseOnHover: true, autoPan: true, zIndexOffset: moving ? 1000 : 0 });
       mk.on('click', (e: L.LeafletMouseEvent) => {
         L.DomEvent.stopPropagation(e);
+        if (moving) return;
         cb.current.onSiteClick(s.id);
       });
-      mk.on('dragend', () => {
-        const ll = mk.getLatLng();
-        cb.current.onSiteMoved(s.id, ll.lat, ll.lng);
-      });
+      if (moving) {
+        mk.on('dragend', () => {
+          const ll = mk.getLatLng();
+          cb.current.onMoveDraft(ll.lat, ll.lng);
+        });
+      } else if (p.mode === 'view' && !p.movingSiteId) {
+        mk.on('mouseover', () => openPop(s));
+        mk.on('mouseout', scheduleClose);
+      }
       mk.addTo(layer);
     });
-  }, [p.sites, p.selectedSiteId, p.pendingLinkSiteId, p.mode]);
+  }, [p.sites, p.selectedSiteId, p.pendingLinkSiteId, p.mode, p.movingSiteId, p.moveDraft]);
 
   /* links */
   useEffect(() => {
@@ -204,5 +261,5 @@ export function MapView(p: Props) {
     else m.fitBounds(L.latLngBounds(pts), { padding: [60, 60], maxZoom: 15 });
   }, [p.focus?.key]);
 
-  return <div ref={el} className="map" aria-label="Карта площадок и пролётов" />;
+  return <div ref={el} className="map" aria-label="Карта объектов и пролётов" />;
 }

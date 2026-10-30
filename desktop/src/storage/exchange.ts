@@ -135,7 +135,7 @@ export function parseSitesCsv(text: string): { sites: CsvSite[]; skipped: number
   const head = splitCsvLine(lines[0], sep).map((h) => h.toLowerCase());
   if (head.some((h) => /назв|name|широт|lat/.test(h))) {
     const find = (re: RegExp, def: number) => { const i = head.findIndex((h) => re.test(h)); return i >= 0 ? i : def; };
-    idx = { name: find(/назв|name|сайт|площад/, 0), code: find(/код|code|номер|бс/, -1), lat: find(/широт|lat/, 2), lon: find(/долгот|lon|lng/, 3), ground: find(/высот|ground|alt|elev/, -1), notes: find(/замет|note|коммент/, -1) };
+    idx = { name: find(/назв|name|сайт|площад|объект/, 0), code: find(/код|code|номер|бс/, -1), lat: find(/широт|lat/, 2), lon: find(/долгот|lon|lng/, 3), ground: find(/высот|ground|alt|elev/, -1), notes: find(/замет|note|коммент/, -1) };
     start = 1;
   }
   const sites: CsvSite[] = [], skipped: number[] = [];
