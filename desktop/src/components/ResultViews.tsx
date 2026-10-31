@@ -59,7 +59,7 @@ export function ProfileChart({ r, height = 260, linkId, notify }: { r: LinkResul
   const hover = useHover();
   const [W, setW] = useState(480);
   const [k, setK] = useState(r.k);
-  const [show, setShow] = useState<'both' | 'main' | 'second'>('both');
+  const [show, setShow] = useState<'all' | 'main' | 'a' | 'b'>('all');
   useEffect(() => setK(r.k), [r.k]);
   useEffect(() => {
     if (!box.current) return;
@@ -78,11 +78,13 @@ export function ProfileChart({ r, height = 260, linkId, notify }: { r: LinkResul
     const P2 = key === 'a' ? { ...P, hA: b.h, HA: P.gA0 + b.h } : { ...P, hB: b.h, HB: P.gB0 + b.h };
     return [{ key, h: b.h, name: key === 'a' ? r.siteA.name : r.siteB.name, P2, G2: geometry(P2, k, fRef) }];
   }) : [];
-  const showMain = !branches.length || show !== 'second', showSecond = branches.length > 0 && show !== 'main';
+  const view = branches.some((b) => b.key === show) || show === 'main' ? show : 'all';
+  const shownB = branches.filter((b) => view === 'all' || view === b.key);
+  const showMain = view === 'all' || view === 'main', showSecond = shownB.length > 0;
   const ml = 40, mr = 14, mt = 28, mb = 24;
   let ymin = Infinity, ymax = -Infinity;
   s.forEach((o) => { ymin = Math.min(ymin, o.g); ymax = Math.max(ymax, o.los + o.F1, o.top); });
-  if (showSecond) branches.forEach((b) => b.G2.s.forEach((o) => { ymax = Math.max(ymax, o.los + o.F1); }));
+  if (showSecond) shownB.forEach((b) => b.G2.s.forEach((o) => { ymax = Math.max(ymax, o.los + o.F1); }));
   ymin = Math.floor(ymin - 4); ymax = Math.ceil(ymax + 6);
   const X = (d: number) => ml + ((W - ml - mr) * d) / P.D;
   const Y = (v: number) => mt + (H - mt - mb) * (1 - (v - ymin) / (ymax - ymin));
@@ -109,7 +111,7 @@ export function ProfileChart({ r, height = 260, linkId, notify }: { r: LinkResul
     { label: 'Вода', v: '--water', color: '', on: hasKind('w') },
     { label: 'Препятствия (вручную)', v: '--clutter', color: '', on: hasManual },
     { label: 'Зона Френеля' + (lowest && r.multi ? ` (${ghz(lowest.ch.freqMHz)})` : ''), v: '--fresnel-edge', color: '', on: true },
-    { label: 'Луч', v: '--accent', color: '', line: true, on: true },
+    { label: 'Луч', v: '--accent', color: '', line: true, on: showMain },
     { label: 'Вторая антенна: луч и зона Френеля', v: '--sd', color: '', line: true, on: showSecond },
     { label: 'Отражение от воды', v: '--water', color: '', line: true, on: !!refl },
     { label: 'Узкое место', v: '--bad', color: '', line: true, on: !!G.crit }
@@ -151,7 +153,7 @@ export function ProfileChart({ r, height = 260, linkId, notify }: { r: LinkResul
     while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (ss[mid].d < hd) lo = mid; else hi = mid; }
     const a0 = ss[lo], b0 = ss[hi], f = b0.d > a0.d ? (hd - a0.d) / (b0.d - a0.d) : 0;
     const L = (x: number, y: number) => x + (y - x) * f;
-    return { key: b.key, name: b.name, h: b.h, H: L(a0.H, b0.H), F1: L(a0.F1, b0.F1) };
+    return { key: b.key, name: b.name, h: b.h, H: L(a0.H, b0.H), F1: L(a0.F1, b0.F1), los: L(a0.los, b0.los) };
   });
   const onMove = (e: { clientX: number; currentTarget: SVGSVGElement }) => {
     if (!linkId) return;
@@ -159,7 +161,7 @@ export function ProfileChart({ r, height = 260, linkId, notify }: { r: LinkResul
     const x = ((e.clientX - rect.left) / rect.width) * W;
     setHover({ linkId, t: Math.max(0, Math.min(1, (x - ml) / (W - ml - mr))), source: 'chart' });
   };
-  const tipW = branches.length ? 236 : 206, tipX = cur ? (X(cur.d) + 12 + tipW > W - mr ? X(cur.d) - 12 - tipW : X(cur.d) + 12) : 0;
+  const tipW = branches.length ? 270 : 206, tipX = cur ? (X(cur.d) + 12 + tipW > W - mr ? X(cur.d) - 12 - tipW : X(cur.d) + 12) : 0;
   return (
     <div className="section" style={{ gap: 8 }}>
       <div ref={box}>
@@ -170,7 +172,7 @@ export function ProfileChart({ r, height = 260, linkId, notify }: { r: LinkResul
           {xt.map((d) => <text key={d} className="tick" x={X(d)} y={H - 7} textAnchor="middle">{fmt(d, xs < 1 ? 1 : 0)}</text>)}
           <text className="tick" x={W - 2} y={H - 7} textAnchor="end">км</text>
           {showMain ? <polygon className="fz" points={fz} /> : null}
-          {showSecond ? branches.map((b) => <polygon key={'fz' + b.key} className="fz2" points={b.G2.s.map((o) => `${X(o.d)},${Y(o.los + o.F1)}`).join(' ') + ' ' + b.G2.s.slice().reverse().map((o) => `${X(o.d)},${Y(o.los - o.F1)}`).join(' ')} />) : null}
+          {showSecond ? shownB.map((b) => <polygon key={'fz' + b.key} className="fz2" points={b.G2.s.map((o) => `${X(o.d)},${Y(o.los + o.F1)}`).join(' ') + ' ' + b.G2.s.slice().reverse().map((o) => `${X(o.d)},${Y(o.los - o.F1)}`).join(' ')} />) : null}
           <polygon className="ground" points={ground} />
           {runs.filter((r0) => r0.kind !== 'w').map((r0, i) => (
             <polygon key={'r' + i} className={r0.kind === 'b' ? 'bld' : r0.kind === 'f' ? 'forest' : 'clutter'} points={runPoly(r0.from, r0.to)} />
@@ -179,7 +181,7 @@ export function ProfileChart({ r, height = 260, linkId, notify }: { r: LinkResul
             <polyline key={'w' + i} className="water" points={runLine(r0.from, r0.to)} />
           ))}
           {showMain ? <line className="los" x1={X(0)} y1={Y(P.HA)} x2={X(P.D)} y2={Y(P.HB)} /> : null}
-          {showSecond ? branches.map((b) => <line key={'l' + b.key} className="los2" x1={X(0)} y1={Y(b.P2.HA)} x2={X(P.D)} y2={Y(b.P2.HB)} />) : null}
+          {showSecond ? shownB.map((b) => <line key={'l' + b.key} className="los2" x1={X(0)} y1={Y(b.P2.HA)} x2={X(P.D)} y2={Y(b.P2.HB)} />) : null}
           <line className="mast" x1={X(0)} y1={Y(P.gA0)} x2={X(0)} y2={Y(P.HA)} />
           <line className="mast" x1={X(P.D)} y1={Y(P.gB0)} x2={X(P.D)} y2={Y(P.HB)} />
           <text className="lbl" x={X(0) + 6} y={Y(P.HA) - 8}>{r.siteA.name} · {fmt(P.hA, 0)} м</text>
@@ -201,7 +203,7 @@ export function ProfileChart({ r, height = 260, linkId, notify }: { r: LinkResul
               <line className="mast2" x1={X(b.key === 'a' ? 0 : P.D)} x2={X(b.key === 'a' ? 0 : P.D)} y1={Y((b.key === 'a' ? P.gA0 : P.gB0) + b.h)} y2={Y(b.key === 'a' ? P.HA : P.HB)} />
               <circle className="sd-ant" cx={X(b.key === 'a' ? 0 : P.D)} cy={Y((b.key === 'a' ? P.gA0 : P.gB0) + b.h)} r={4.5} />
               <text className="lbl sd-lbl" x={X(b.key === 'a' ? 0 : P.D) + (b.key === 'a' ? 8 : -8)} y={Y((b.key === 'a' ? P.gA0 : P.gB0) + b.h) + 4} textAnchor={b.key === 'a' ? 'start' : 'end'}>{fmt(b.h, 0)} м</text>
-              {showSecond && b.G2.crit ? (
+              {shownB.includes(b) && b.G2.crit ? (
                 <g>
                   <line className="crit2" x1={X(b.G2.crit.d)} x2={X(b.G2.crit.d)} y1={Y(b.G2.crit.top)} y2={Y(b.G2.crit.los)} />
                   <rect className="critdot2" x={X(b.G2.crit.d) - 3.5} y={Y(b.G2.crit.top) - 3.5} width={7} height={7} />
@@ -212,22 +214,32 @@ export function ProfileChart({ r, height = 260, linkId, notify }: { r: LinkResul
           {cur && terrain ? (
             <g className="cursor" pointerEvents="none">
               <line className="cur-line" x1={X(cur.d)} x2={X(cur.d)} y1={mt - 6} y2={H - mb} />
-              <line className="cur-fz" x1={X(cur.d)} x2={X(cur.d)} y1={Y(cur.los + cur.F1)} y2={Y(cur.los - cur.F1)} />
-              <circle className="cur-dot" cx={X(cur.d)} cy={Y(cur.los)} r={4} />
+              {showMain ? <line className="cur-fz" x1={X(cur.d)} x2={X(cur.d)} y1={Y(cur.los + cur.F1)} y2={Y(cur.los - cur.F1)} /> : null}
+              {showMain ? <circle className="cur-dot" cx={X(cur.d)} cy={Y(cur.los)} r={4} /> : null}
+              {curB.filter((q) => shownB.some((b) => b.key === q.key)).map((q) => <circle key={'cd' + q.key} className="cur-dot2" cx={X(cur.d)} cy={Y(q.los)} r={4} />)}
               <circle className="cur-top" cx={X(cur.d)} cy={Y(cur.top)} r={3.5} />
-              <rect className="cur-tip" x={tipX} y={mt} width={tipW} height={92 + (showSecond ? curB.length * 17 : 0)} rx={6} />
-              <text className="cur-txt" x={tipX + 10} y={mt + 17}><tspan fontWeight="700">{fmt(cur.d, 2)} км</tspan> от «{r.siteA.name}»</text>
-              <text className="cur-txt" x={tipX + 10} y={mt + 34}>Земля {fmt(terrain.g, 0)} м{terrain.t === 'w' ? ', вода' : terrain.c > 0 ? `, ${terrain.t === 'b' ? 'здание' : terrain.t === 'f' ? 'лес' : 'препятствие'} ${fmt(terrain.c, 0)} м` : ''}</text>
-              <text className="cur-txt" x={tipX + 10} y={mt + 51}>Луч на высоте {fmt(cur.los, 0)} м</text>
-              <text className="cur-txt" x={tipX + 10} y={mt + 68}>Зона Френеля R₁ = {fmt(cur.F1, 1)} м</text>
-              <text className={`cur-txt ${cur.F1 > 0 && cur.H / cur.F1 < 0.577 ? (cur.H < 0 ? 'bad' : 'warn') : 'ok'}`} x={tipX + 10} y={mt + 85} fontWeight="700">
-                {branches.length ? 'Основная: просвет' : 'Просвет'} {fmt(cur.H, 1)} м{cur.F1 > 0 ? ` · ${cur.H / cur.F1 > 3 ? '> 300' : Math.round((cur.H / cur.F1) * 100)}% R₁` : ''}
-              </text>
-              {showSecond ? curB.map((q, i) => (
-                <text key={q.key} className={`cur-txt ${q.F1 > 0 && q.H / q.F1 < 0.577 ? (q.H < 0 ? 'bad' : 'warn') : 'ok'}`} x={tipX + 10} y={mt + 102 + i * 17} fontWeight="700">
-                  Вторая «{q.name}» ({fmt(q.h, 0)} м): {fmt(q.H, 1)} м{q.F1 > 0 ? ` · ${q.H / q.F1 > 3 ? '> 300' : Math.round((q.H / q.F1) * 100)}%` : ''}
-                </text>
-              )) : null}
+              {(() => {
+                const pctTxt = (H0: number, F: number) => `${fmt(H0, 1)} м${F > 0 ? ` · ${H0 / F > 3 ? '> 300' : Math.round((H0 / F) * 100)}% R₁` : ''}`;
+                const cls = (H0: number, F: number) => `cur-txt ${F > 0 && H0 / F < 0.577 ? (H0 < 0 ? 'bad' : 'warn') : 'ok'}`;
+                const lines: { t: string; c: string; b?: boolean }[] = [
+                  { t: `${fmt(cur.d, 2)} км от «${r.siteA.name}»`, c: 'cur-txt', b: true },
+                  { t: `Земля ${fmt(terrain.g, 0)} м${terrain.t === 'w' ? ', вода' : terrain.c > 0 ? `, ${terrain.t === 'b' ? 'здание' : terrain.t === 'f' ? 'лес' : 'препятствие'} ${fmt(terrain.c, 0)} м` : ''}`, c: 'cur-txt' }
+                ];
+                if (showMain) {
+                  lines.push({ t: `${branches.length ? 'Основная: луч' : 'Луч'} на высоте ${fmt(cur.los, 0)} м, R₁ = ${fmt(cur.F1, 1)} м`, c: 'cur-txt' });
+                  lines.push({ t: `${branches.length ? 'Основная: просвет' : 'Просвет'} ${pctTxt(cur.H, cur.F1)}`, c: cls(cur.H, cur.F1), b: true });
+                }
+                curB.filter((q) => shownB.some((b) => b.key === q.key)).forEach((q) => {
+                  if (!showMain) lines.push({ t: `Вторая «${q.name}» (${fmt(q.h, 0)} м): луч ${fmt(q.los, 0)} м, R₁ = ${fmt(q.F1, 1)} м`, c: 'cur-txt' });
+                  lines.push({ t: `Вторая «${q.name}»${showMain ? ` (${fmt(q.h, 0)} м)` : ''}: просвет ${pctTxt(q.H, q.F1)}`, c: cls(q.H, q.F1), b: true });
+                });
+                return (
+                  <>
+                    <rect className="cur-tip" x={tipX} y={mt} width={tipW} height={lines.length * 17 + 10} rx={6} />
+                    {lines.map((l, i) => <text key={i} className={l.c} x={tipX + 10} y={mt + 17 + i * 17} fontWeight={l.b ? 700 : undefined}>{l.t}</text>)}
+                  </>
+                );
+              })()}
             </g>
           ) : null}
         </svg>
@@ -241,7 +253,7 @@ export function ProfileChart({ r, height = 260, linkId, notify }: { r: LinkResul
         <div className="kctl">
           <span>Показать:</span>
           <div className="seg" role="group" aria-label="Какие антенны показать">
-            {([['both', 'Обе антенны'], ['main', 'Основная'], ['second', 'Вторая']] as const).map(([v, t]) => <button key={v} type="button" aria-pressed={show === v} onClick={() => setShow(v)}>{t}</button>)}
+            {([['all', 'Все антенны'], ['main', 'Основная'], ...branches.map((b) => [b.key, branches.length > 1 ? `Вторая на «${b.name}»` : 'Вторая'] as const)] as [typeof show, string][]).map(([v, t]) => <button key={v} type="button" aria-pressed={view === v} onClick={() => setShow(v)}>{t}</button>)}
           </div>
         </div>
       ) : null}
@@ -261,14 +273,14 @@ export function ProfileChart({ r, height = 260, linkId, notify }: { r: LinkResul
           Голубой пунктир — луч, отражённый от воды на {fmt(refl.d, 2)} км{r.multi && rc ? ` (${rc.tag})` : ''}: он складывается с прямым лучом, и в зависимости от рефракции сигнал усиливается или ослабевает до {fmt(refl.worst, 1)} дБ. Подробности — в рекомендациях и на вкладке «Подробно».
         </p>
       ) : null}
-      {showSecond ? branches.map((b) => b.G2.crit ? (
+      {showSecond ? shownB.map((b) => b.G2.crit ? (
         <p key={'h' + b.key} className="hint">
           Вторая антенна на «{b.name}» ({fmt(b.h, 0)} м): узкое место на {fmt(b.G2.crit.d, 2)} км, до препятствия {fmt(b.G2.crit.H, 1)} м — {b.G2.crit.rel > 3 ? `в ${fmt(b.G2.crit.rel, 0)} раз больше` : Math.round(b.G2.crit.rel * 100) + '%'} радиуса зоны Френеля.{b.G2.crit.rel < 0.577 ? ' Просвета мало: вторая антенна будет принимать слабее основной.' : ''}
         </p>
       ) : null) : null}
-      {c ? (
+      {c && showMain ? (
         <p className="hint">
-          Узкое место — {fmt(c.d, 2)} км от «{r.siteA.name}»: до препятствия {fmt(c.H, 1)} м, это {c.rel > 3 ? `в ${fmt(c.rel, 0)} раз больше` : Math.round(c.rel * 100) + '%'} радиуса зоны Френеля ({fmt(c.F1, 1)} м). Открытой трасса считается от 58%.
+          {branches.length ? 'Основная антенна: узкое место' : 'Узкое место'} — {fmt(c.d, 2)} км от «{r.siteA.name}»: до препятствия {fmt(c.H, 1)} м, это {c.rel > 3 ? `в ${fmt(c.rel, 0)} раз больше` : Math.round(c.rel * 100) + '%'} радиуса зоны Френеля ({fmt(c.F1, 1)} м). Открытой трасса считается от 58%.
         </p>
       ) : null}
     </div>

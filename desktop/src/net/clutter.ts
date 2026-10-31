@@ -30,7 +30,20 @@ function corridor(lat1: number, lon1: number, lat2: number, lon2: number, halfWi
 
 export async function fetchClutterObjects(lat1: number, lon1: number, lat2: number, lon2: number, opts: ClutterOptions): Promise<ClutterObject[]> {
   const poly = corridor(lat1, lon1, lat2, lon2, Math.max(40, (opts.halfWidth ?? 15) + 30));
-  const q = `[out:json][timeout:60];(way["building"](poly:"${poly}");relation["building"](poly:"${poly}");way["landuse"="forest"](poly:"${poly}");way["natural"="wood"](poly:"${poly}");relation["landuse"="forest"](poly:"${poly}");relation["natural"="wood"](poly:"${poly}");way["natural"="water"](poly:"${poly}");relation["natural"="water"](poly:"${poly}");way["waterway"="riverbank"](poly:"${poly}");way["landuse"="reservoir"](poly:"${poly}");way["waterway"~"^(river|canal)$"](poly:"${poly}"););out tags geom;`;
+  // Geometry is cut to a box around the path: a city river or a big forest comes as its nearby
+  // boundary only, which keeps the answer small; crossings are counted along the path.
+  const pad = 0.03, s = Math.min(lat1, lat2) - pad, n = Math.max(lat1, lat2) + pad;
+  const padLon = pad / Math.max(0.2, Math.cos(rad((lat1 + lat2) / 2)));
+  const w = Math.min(lon1, lon2) - padLon, e = Math.max(lon1, lon2) + padLon;
+  const f = (sel: string) => `${sel}(poly:"${poly}");`;
+  const q = `[out:json][timeout:90][maxsize:268435456];(` +
+    f('way["building"]') + f('relation["building"]') +
+    f('way["landuse"="forest"]') + f('way["natural"="wood"]') + f('relation["landuse"="forest"]') + f('relation["natural"="wood"]') +
+    f('way["natural"~"^(water|bay)$"]') + f('relation["natural"~"^(water|bay)$"]') +
+    f('way["waterway"~"^(riverbank|dock)$"]') + f('relation["waterway"="riverbank"]') +
+    f('way["landuse"~"^(reservoir|basin)$"]') + f('relation["landuse"~"^(reservoir|basin)$"]') +
+    f('way["waterway"~"^(river|canal)$"]') +
+    `);out tags geom(${s.toFixed(5)},${w.toFixed(5)},${n.toFixed(5)},${e.toFixed(5)});`;
   let data: { elements?: OsmEl[] };
   try {
     data = await httpJson<{ elements?: OsmEl[] }>(`${OVERPASS_URL}?data=${encodeURIComponent(q)}`, 90000);

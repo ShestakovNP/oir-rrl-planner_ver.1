@@ -5,6 +5,9 @@ import { openRepo, type Repo } from '../storage/repo';
 import { calculateLink, channelsShareFrequency, type LinkResult } from '../data/calc/link';
 import { baseLink, defaultLibrary } from '../data/samples';
 import { uid } from '../data/ids';
+import { BUILD_ID, RESET_PROJECTS_ON_NEW_BUILD } from '../config';
+import { isTauri } from '../platform';
+import { makeBackup } from '../storage/exchange';
 
 export type Theme = 'system' | 'light' | 'dark';
 export interface Settings {
@@ -43,6 +46,8 @@ export interface Store {
   deleteLink(id: string): Promise<void>;
   saveLibrary(lib: Library): void;
   reloadAll(): Promise<void>;
+  /** One-time message from start-up (e.g. projects cleared for a new build). */
+  bootNotice: string | null;
 }
 
 const Ctx = createContext<Store | null>(null);
@@ -56,6 +61,7 @@ export const useStore = () => {
 export function StoreProvider({ children, fallback }: { children: ReactNode; fallback: (err: string | null) => ReactNode }) {
   const [repo, setRepo] = useState<Repo | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [bootNotice, setBootNotice] = useState<string | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [sites, setSites] = useState<Site[]>([]);
@@ -81,7 +87,7 @@ export function StoreProvider({ children, fallback }: { children: ReactNode; fal
   }, []);
 
   const bootstrap = useCallback(async (r: Repo) => {
-    const ps = await r.listProjects();
+    let ps = await r.listProjects();
     let lib = await r.getLibrary();
     const seeded = await r.getSetting<boolean>('seeded');
     if (!seeded) {
@@ -104,12 +110,36 @@ export function StoreProvider({ children, fallback }: { children: ReactNode; fal
       }
       await r.setSetting('migration:xpd-placeholder', true);
     }
+    // Test phase: a new build starts with an empty project list (projects are backed up first).
+    let resetNote: string | null = null;
+    if (RESET_PROJECTS_ON_NEW_BUILD && isTauri()) {
+      const prevBuild = await r.getSetting<string>('buildId');
+      if (prevBuild !== BUILD_ID) {
+        if (ps.length) {
+          let saved = '';
+          try {
+            const { appConfigDir, join } = await import('@tauri-apps/api/path');
+            const fs = await import('@tauri-apps/plugin-fs');
+            const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+            const file = await join(await appConfigDir(), `projects-backup-${stamp}.json`);
+            await fs.writeTextFile(file, JSON.stringify(await makeBackup(r), null, 1));
+            saved = file;
+          } catch (e) { console.warn('backup before reset failed', e); }
+          for (const p of ps) await r.deleteProject(p.id);
+          ps = [];
+          resetNote = `Новая сборка программы: список проектов очищен.${saved ? ` Копия прежних проектов сохранена: ${saved} (её можно вернуть через «Файл» → «Импорт проекта или копии»).` : ''}`;
+        }
+        await r.setSetting('buildId', BUILD_ID);
+      }
+    }
     // Older versions named a fresh entry «Новая радиостанция»; the library now calls them ППУ.
     if (lib && lib.radios.some((x) => /^Новая радиостанция$/i.test(x.name.trim()))) {
       lib = { ...lib, radios: lib.radios.map((x) => (/^Новая радиостанция$/i.test(x.name.trim()) ? { ...x, name: 'Новое ППУ' } : x)) };
       await r.saveLibrary(lib);
     }
     const st = { ...DEFAULT_SETTINGS, ...((await r.getSetting<Settings>('settings')) ?? {}) };
+    if (resetNote) { st.lastProjectId = null; st.favoriteProjects = []; await r.setSetting('settings', st); }
+    setBootNotice(resetNote);
     setSettings(st);
     setLibrary(lib ?? { radios: [], antennas: [] });
     setProjects(ps);
@@ -161,7 +191,7 @@ export function StoreProvider({ children, fallback }: { children: ReactNode; fal
   const project = projects.find((p) => p.id === projectId) ?? null;
 
   const store: Store = {
-    repo, projects, project, sites, links, library, results, settings, setSetting,
+    repo, projects, project, sites, links, library, results, settings, setSetting, bootNotice,
     async selectProject(id) {
       await loadProject(repo, id);
       setSetting('lastProjectId', id);

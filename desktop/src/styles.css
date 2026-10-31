@@ -422,3 +422,4 @@ table.tbl { border-collapse: collapse; width: 100%; font-size: 12.5px; }
 .chart .sd-ant { fill: var(--sd); stroke: var(--panel); stroke-width: 2; }
 .chart .crit2 { stroke: var(--sd); stroke-width: 1.4; stroke-dasharray: 3 2; }
 .chart .critdot2 { fill: var(--sd); stroke: var(--panel); stroke-width: 1.5; }
+.chart .cur-dot2 { fill: var(--sd); stroke: var(--panel); stroke-width: 2; }

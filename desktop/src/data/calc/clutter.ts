@@ -15,6 +15,14 @@ export interface ClutterObject {
   /** Rivers mapped as a centre line: the ring is a polyline and `width` is the river width, m. */
   line?: boolean;
   width?: number;
+  /**
+   * Area boundaries (forest, water) as polylines, outer and inner rings, possibly cut at the
+   * edge of the requested area. The path is tested by counting boundary crossings, so huge
+   * multipolygons (a river through a whole city) work without their full outline.
+   */
+  edges?: [number, number][][];
+  /** All rings of the area are closed: the start of the path can be tested with point-in-polygon. */
+  closed?: boolean;
 }
 
 export interface ClutterOptions {
@@ -40,6 +48,40 @@ export interface ClutterResult {
 function frame(lat0: number, lon0: number) {
   const kx = 111320 * Math.cos(rad(lat0)), ky = 110574;
   return (lat: number, lon: number): [number, number] => [(lon - lon0) * kx, (lat - lat0) * ky];
+}
+
+/**
+ * Parts of the path A→B (as fractions 0..1) that lie inside an area, found by counting
+ * crossings of the path with the area boundary. Works with cut boundaries of huge areas.
+ */
+function crossSpans(o: ClutterObject, pA: [number, number], pB: [number, number], toXY: (la: number, lo: number) => [number, number]): [number, number][] {
+  const ts: number[] = [];
+  const rx = pB[0] - pA[0], ry = pB[1] - pA[1];
+  const xyEdges = (o.edges || []).map((e) => e.map(([a, b]) => toXY(a, b)));
+  for (const e of xyEdges) {
+    for (let i = 1; i < e.length; i++) {
+      const [qx, qy] = e[i - 1], sx = e[i][0] - qx, sy = e[i][1] - qy;
+      const den = rx * sy - ry * sx;
+      if (Math.abs(den) < 1e-12) continue;
+      const t = ((qx - pA[0]) * sy - (qy - pA[1]) * sx) / den;
+      const u = ((qx - pA[0]) * ry - (qy - pA[1]) * rx) / den;
+      if (t >= 0 && t <= 1 && u >= 0 && u < 1) ts.push(t);
+    }
+  }
+  ts.sort((a, b) => a - b);
+  // Is A inside? Exact when the outline is complete; otherwise the antenna is taken to stand on land.
+  let inA = false;
+  if (o.closed) for (const e of xyEdges) if (e.length >= 3 && inside(pA, e)) inA = !inA;
+  if (!o.closed && ts.length % 2 === 1) inA = false;
+  const spans: [number, number][] = [];
+  let state = inA, from = 0;
+  for (const t of ts) {
+    if (state) spans.push([from, t]);
+    else from = t;
+    state = !state;
+  }
+  if (state) spans.push([from, 1]);
+  return spans;
 }
 
 function inside(p: [number, number], poly: [number, number][]): boolean {
@@ -71,7 +113,8 @@ export function applyClutter(
 ): ClutterResult {
   const D = vincenty(lat1, lon1, lat2, lon2).km;
   const toXY = frame((lat1 + lat2) / 2, (lon1 + lon2) / 2);
-  const shapes = objs.map((o) => ({ ...o, xy: o.ring.map(([a, b]) => toXY(a, b)) }));
+  const pA = toXY(lat1, lon1), pB = toXY(lat2, lon2);
+  const shapes = objs.map((o) => ({ ...o, xy: o.ring.map(([a, b]) => toXY(a, b)), spans: o.edges && !o.line ? crossSpans(o, pA, pB, toXY) : null }));
   const half = opts.halfWidth ?? 15;
   const stepKm = Math.max(0.005, Math.min(0.02, D / 3000));
   const n = Math.max(2, Math.round(D / stepKm) + 1);
@@ -85,7 +128,8 @@ export function applyClutter(
     shapes.forEach((s, k) => {
       if (la < s.bbox[0] - 0.001 || la > s.bbox[2] + 0.001 || lo < s.bbox[1] - 0.002 || lo > s.bbox[3] + 0.002) return;
       let hit: boolean;
-      if (s.line) hit = distToPoly(p, s.xy, false) <= (s.width ?? 30) / 2;
+      if (s.spans) hit = s.spans.some(([a, b]) => t >= a && t <= b);
+      else if (s.line) hit = distToPoly(p, s.xy, false) <= (s.width ?? 30) / 2;
       else hit = inside(p, s.xy) || (s.kind === 'building' && distToPoly(p, s.xy) <= half);
       if (!hit) return;
       if (s.kind === 'water') { usedW.add(k); if (!kind) kind = 'w'; return; }
@@ -144,8 +188,21 @@ interface OsmGeom { lat: number; lon: number }
 export interface OsmEl {
   type: 'way' | 'relation';
   tags?: Record<string, string>;
-  geometry?: OsmGeom[];
-  members?: { role: string; geometry?: OsmGeom[] }[];
+  /** With `out geom(bbox)` nodes outside the box come as null. */
+  geometry?: (OsmGeom | null)[];
+  members?: { role: string; geometry?: (OsmGeom | null)[] }[];
+}
+
+/** Splits a geometry at missing (cut-off) nodes into polylines. */
+function pieces(g: (OsmGeom | null)[] | undefined): [number, number][][] {
+  const out: [number, number][][] = [];
+  let cur: [number, number][] = [];
+  for (const p of g || []) {
+    if (p && Number.isFinite(p.lat) && Number.isFinite(p.lon)) cur.push([p.lat, p.lon]);
+    else { if (cur.length >= 2) out.push(cur); cur = []; }
+  }
+  if (cur.length >= 2) out.push(cur);
+  return out;
 }
 
 const TYPE_HEIGHT: Record<string, number> = {
@@ -171,9 +228,9 @@ function buildingHeight(tags: Record<string, string>): { h: number; measured: bo
 }
 
 /** Joins open outer ways of a multipolygon into rings. */
-function rings(el: OsmEl): [number, number][][] {
-  if (el.type === 'way' && el.geometry && el.geometry.length >= 3) return [el.geometry.map((g) => [g.lat, g.lon])];
-  const parts = (el.members || []).filter((m) => m.role === 'outer' && m.geometry && m.geometry.length >= 2).map((m) => m.geometry!.map((g) => [g.lat, g.lon] as [number, number]));
+function rings(el: OsmEl, roles: string[] = ['outer'], minLen = 3): [number, number][][] {
+  if (el.type === 'way') { const p = pieces(el.geometry); return p.length === 1 && p[0].length >= 3 ? p : p.filter((x) => x.length >= 2); }
+  const parts = (el.members || []).filter((m) => roles.includes(m.role || 'outer')).flatMap((m) => pieces(m.geometry));
   const out: [number, number][][] = [];
   const same = (a: [number, number], b: [number, number]) => Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9;
   const pool = parts.slice();
@@ -188,7 +245,7 @@ function rings(el: OsmEl): [number, number][][] {
         if (same(p[p.length - 1], end)) { ring = ring.concat(p.slice(0, -1).reverse()); pool.splice(i, 1); grown = true; break; }
       }
     }
-    if (ring.length >= 3) out.push(ring);
+    if (ring.length >= minLen) out.push(ring);
   }
   return out;
 }
@@ -205,19 +262,29 @@ export function parseOverpass(data: { elements?: OsmEl[] }, opts: ClutterOptions
     const tags = el.tags || {};
     const isBuilding = !!tags.building && tags.building !== 'no';
     const isForest = tags.landuse === 'forest' || tags.natural === 'wood';
-    const isWaterArea = tags.natural === 'water' || tags.waterway === 'riverbank' || tags.landuse === 'reservoir' || tags.landuse === 'basin';
+    const isWaterArea = tags.natural === 'water' || tags.natural === 'bay' || tags.waterway === 'riverbank' || tags.waterway === 'dock' || tags.landuse === 'reservoir' || tags.landuse === 'basin';
     const isRiverLine = el.type === 'way' && (tags.waterway === 'river' || tags.waterway === 'canal');
-    if (isRiverLine && el.geometry && el.geometry.length >= 2) {
+    if (isRiverLine) {
       // a river drawn as a line: use its width tag, otherwise a typical width
-      const ring = el.geometry.map((g) => [g.lat, g.lon] as [number, number]);
       const w = num(tags.width) || (tags.waterway === 'canal' ? 15 : 40);
-      objs.push({ kind: 'water', height: 0, measured: false, ring, bbox: bbox(ring), line: true, width: w });
+      for (const ring of pieces(el.geometry)) objs.push({ kind: 'water', height: 0, measured: false, ring, bbox: bbox(ring), line: true, width: w });
       continue;
     }
     if (!isBuilding && !isForest && !isWaterArea) continue;
     const kind: ClutterObject['kind'] = isBuilding ? 'building' : isForest ? 'forest' : 'water';
     const hh = isBuilding ? buildingHeight(tags) : isForest ? { h: opts.forestHeight, measured: false } : { h: 0, measured: false };
-    for (const ring of rings(el)) objs.push({ kind, height: hh.h, measured: hh.measured, ring, bbox: bbox(ring) });
+    if (kind === 'building') {
+      for (const ring of rings(el)) if (ring.length >= 3) objs.push({ kind, height: hh.h, measured: hh.measured, ring, bbox: bbox(ring) });
+      continue;
+    }
+    // Forest and water: one object per area with all its boundaries (outer and inner).
+    const all = rings(el, ['outer', 'inner', ''], 2);
+    if (!all.length) continue;
+    const same = (a: [number, number], b: [number, number]) => Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9;
+    const closed = all.every((r) => r.length >= 4 && same(r[0], r[r.length - 1]));
+    const flat = all.flat();
+    const outer = rings(el).sort((a, b) => b.length - a.length)[0] ?? all[0];
+    objs.push({ kind, height: hh.h, measured: hh.measured, ring: outer, bbox: bbox(flat), edges: all, closed });
   }
   return objs;
 }

@@ -54,6 +54,15 @@ export function App() {
     setToasts((t) => [...t, { id, text, error }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), error ? 6500 : 3800);
   }, []);
+  /* start-up message (a new test build cleared the project list) */
+  const bootShown = useRef(false);
+  useEffect(() => {
+    if (!store.bootNotice || bootShown.current) return;
+    bootShown.current = true;
+    const id = Date.now() + Math.random();
+    setToasts((t) => [...t, { id, text: store.bootNotice! }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 12000);
+  }, [store.bootNotice]);
   const fail = useCallback((e: unknown) => notify((e as Error)?.message || 'Не получилось.', true), [notify]);
   const focusOn = (points: [number, number][]) => setFocus({ key: ++focusKey.current, points });
 

@@ -6,6 +6,16 @@ export const ORG_SHORT = 'ОИР';
 export const ORG_FULL = 'Отдел инфраструктурных решений';
 export const APP_VERSION = '1.0.0';
 
+declare const __BUILD_ID__: string;
+/** Unique id of this build (set by vite.config.ts). */
+export const BUILD_ID: string = typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : 'dev';
+/**
+ * Test phase: every new build starts with an empty project list. Projects of the previous build
+ * are saved to a backup JSON next to the database first. The equipment library is kept.
+ * Set to false before handing the program out for real work — then updates keep the projects.
+ */
+export const RESET_PROJECTS_ON_NEW_BUILD = true;
+
 /** Sent with every request: OSM, Nominatim and OpenTopoData policies ask apps to identify themselves. */
 export const USER_AGENT = `OIR-RRL-Planner/${APP_VERSION} (desktop; infrastructure planning tool)`;
 
