@@ -48,3 +48,33 @@ test('Overpass answer: heights from tags, levels, type; multipolygon outer ways 
   assert.deepEqual(objs.map((o) => [o.kind, o.height, o.measured]), [['building', 21, true], ['building', 17, true], ['building', 3, false], ['forest', 22, false]]);
   assert.ok(objs[3].ring.length >= 5, 'two open outer ways joined into one ring');
 });
+
+test('a city river cut to the box: water between its two banks, island excluded', async () => {
+  const { parseOverpass } = await import('../src/data/calc/clutter');
+  // Path A→B goes north-east ≈1.78 km. River banks cross it as two long lines (outline cut by geom(bbox)).
+  const bank = (t: number) => {
+    const [la, lo] = intermediate(A[0], A[1], B[0], B[1], t);
+    return [null, { lat: la - 0.01, lon: lo + 0.01 }, { lat: la + 0.01, lon: lo - 0.01 }, null];
+  };
+  const isl = (() => {
+    const [la, lo] = intermediate(A[0], A[1], B[0], B[1], 0.5);
+    const d = 0.0006;
+    return [[la - d, lo - d], [la - d, lo + d], [la + d, lo + d], [la + d, lo - d], [la - d, lo - d]].map(([a, b]) => ({ lat: a, lon: b }));
+  })();
+  const objs = parseOverpass({ elements: [
+    { type: 'relation', tags: { natural: 'water', water: 'river' }, members: [
+      { role: 'outer', geometry: bank(0.3) }, { role: 'outer', geometry: bank(0.7) }, { role: 'inner', geometry: isl }
+    ] }
+  ] }, { forestHeight: 20 });
+  assert.equal(objs.length, 1);
+  assert.equal(objs[0].closed, false);
+  const ground = [{ d: 0, g: 120, c: 0 }, { d: 1.782, g: 120, c: 0 }];
+  const r = applyClutter(ground, A[0], A[1], B[0], B[1], objs, { forestHeight: 20 });
+  const at = (f: number) => r.profile.reduce((best, p) => (Math.abs(p.d - 1.782 * f) < Math.abs(best.d - 1.782 * f) ? p : best)).t;
+  assert.equal(at(0.15), undefined, 'land before the river');
+  assert.equal(at(0.4), 'w', 'water');
+  assert.equal(at(0.5), undefined, 'island');
+  assert.equal(at(0.6), 'w', 'water after the island');
+  assert.equal(at(0.85), undefined, 'land after the river');
+  assert.ok(r.waterShare > 0.25 && r.waterShare < 0.4, `share ${r.waterShare}`);
+});
