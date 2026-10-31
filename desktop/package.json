@@ -9,7 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/link.test.ts tests/report.test.ts tests/clutter.test.ts tests/water.test.ts",
+    "test": "tsx --test tests/link.test.ts tests/report.test.ts tests/clutter.test.ts tests/water.test.ts tests/protection.test.ts",
     "tauri": "tauri",
     "app:dev": "tauri dev",
     "app:build": "tauri build",

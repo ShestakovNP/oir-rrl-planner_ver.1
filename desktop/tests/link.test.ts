@@ -65,7 +65,7 @@ test('co-channel same polarization is flagged', () => {
   l.channels[1].freqMHz = 6000;
   l.channels[1].pol = 'H';
   const r = calculateLink(l, site(l.siteA), site(l.siteB));
-  assert.ok(r.recs.some((x) => x.title === 'Каналы глушат друг друга'));
+  assert.ok(r.recs.some((x) => x.title === 'Стволы глушат друг друга'));
 });
 
 test('missing profile falls back to flat ground with a warning', () => {

@@ -81,6 +81,9 @@
           "url": "https://server.arcgisonline.com/*"
         },
         {
+          "url": "https://*.maps.2gis.com/*"
+        },
+        {
           "url": "https://api.maptiler.com/*"
         },
         {
