@@ -14,7 +14,7 @@ export interface Settings {
   lastProjectId: string | null;
   /** Pinned projects shown on top of the project list (up to 5). */
   favoriteProjects: string[];
-  /** The first-steps guide was finished or hidden. */
+  /** The «?» guide button was used at least once (until then it is gently highlighted). */
   guideDone: boolean;
 }
 const DEFAULT_SETTINGS: Settings = { providerId: 'osm', theme: 'system', mapView: { center: [56.5, 84.9], zoom: 8 }, lastProjectId: null, favoriteProjects: [], guideDone: false };
@@ -103,6 +103,11 @@ export function StoreProvider({ children, fallback }: { children: ReactNode; fal
         if (l.xpdA === 30 && l.xpdB === 30 && !channelsShareFrequency(l)) await r.saveLink({ ...l, xpdA: null, xpdB: null });
       }
       await r.setSetting('migration:xpd-placeholder', true);
+    }
+    // Older versions named a fresh entry «Новая радиостанция»; the library now calls them ППУ.
+    if (lib && lib.radios.some((x) => /^Новая радиостанция$/i.test(x.name.trim()))) {
+      lib = { ...lib, radios: lib.radios.map((x) => (/^Новая радиостанция$/i.test(x.name.trim()) ? { ...x, name: 'Новое ППУ' } : x)) };
+      await r.saveLibrary(lib);
     }
     const st = { ...DEFAULT_SETTINGS, ...((await r.getSetting<Settings>('settings')) ?? {}) };
     setSettings(st);

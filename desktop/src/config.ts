@@ -26,6 +26,7 @@ const OSM_ATTR = '© участники <a href="https://www.openstreetmap.org/c
 
 export const TILE_PROVIDERS: TileProvider[] = [
   { id: 'osm', name: 'OpenStreetMap', url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', maxZoom: 19, attribution: OSM_ATTR },
+  { id: '2gis', name: '2ГИС', url: 'https://tile{s}.maps.2gis.com/tiles?x={x}&y={y}&z={z}&v=1.5&ts=online_sd', subdomains: '0123', maxZoom: 18, attribution: '© <a href="https://2gis.ru">2ГИС</a>' },
   { id: 'topo', name: 'Рельеф (OpenTopoMap)', url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', subdomains: 'abc', maxZoom: 17, attribution: `${OSM_ATTR}, SRTM | © <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)` },
   { id: 'sat', name: 'Спутник (Esri)', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', maxZoom: 19, attribution: 'Снимки © Esri, Maxar, Earthstar Geographics' },
   { id: 'light', name: 'Светлая (CARTO)', url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', subdomains: 'abcd', maxZoom: 20, attribution: `${OSM_ATTR} © <a href="https://carto.com/attributions">CARTO</a>` },

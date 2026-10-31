@@ -8,10 +8,10 @@ import { Icon } from './ui';
 
 type LinkTab = 'result' | 'input' | 'profile' | 'detail';
 const TAB_INFO: { k: LinkTab; title: string; text: string }[] = [
-  { k: 'result', title: 'Итог', text: 'Вердикт простыми словами, запас по сигналу, рекомендации (высоты антенн, модуляция, поляризация), профиль трассы и азимуты для наведения.' },
-  { k: 'input', title: 'Исходные данные', text: 'Высоты подвеса и антенны на обоих концах, ППУ и режимы модуляции, частоты и поляризации каналов, климат и требуемая надёжность.' },
+  { k: 'input', title: 'Исходные данные', text: 'Высоты подвеса и антенны на обоих концах, ППУ и режимы модуляции, частоты и поляризации стволов, климат и требуемая надёжность.' },
   { k: 'profile', title: 'Профиль', text: 'Рельеф SRTM, здания, лес и вода с карты; ручная правка точек; сохранение графика в PNG или JPEG.' },
-  { k: 'detail', title: 'Подробно', text: 'Результаты по каждому режиму, сравнение поляризаций и весь расчёт по шагам. Отчёт PDF — кнопка «PDF» вверху карточки пролёта.' }
+  { k: 'detail', title: 'Подробно', text: 'Результаты по каждому режиму, сравнение поляризаций и весь расчёт по шагам. Отчёт PDF — кнопка «PDF» вверху карточки пролёта.' },
+  { k: 'result', title: 'Итог', text: 'Вердикт простыми словами, запас по сигналу, рекомендации (высоты антенн, модуляция, поляризация), профиль трассы и азимуты для наведения.' }
 ];
 
 interface Props {
@@ -86,7 +86,7 @@ export function Guide(p: Props) {
       <section className="guide floating" aria-label="Первые шаги">
         <header>
           <div><b>Первые шаги</b><span className="guide-prog">{Math.min(step - 1, 4)} из 4</span></div>
-          <button type="button" className="btn sm ghost" onClick={p.onClose} title="Скрыть гид (вернуть: кнопка с луной → «Первые шаги»)"><Icon name="close" /></button>
+          <button type="button" className="btn sm ghost" onClick={p.onClose} title="Скрыть гид (открыть снова — кнопка «?» вверху)"><Icon name="close" /></button>
         </header>
         <ol className="guide-steps">
           {items.map((it) => (
@@ -132,7 +132,7 @@ export function Guide(p: Props) {
             ) : null
           ) : (
             <>
-              {curTab === 'detail' ? <p className="guide-tab">«Подробно»: {TAB_INFO[3].text}</p> : null}
+              {curTab === 'result' ? <p className="guide-tab">«Итог»: {TAB_INFO[3].text}</p> : null}
               <p><b>Готово!</b> Вы прошли основные шаги. Дальше: поправьте высоты и антенны во вкладке «Исходные данные», сохраните отчёт кнопкой «PDF». Точку объекта можно передвинуть: наведите на неё курсор на карте → «Изменить положение».</p>
               <button type="button" className="btn sm primary" onClick={p.onClose}>Завершить</button>
             </>

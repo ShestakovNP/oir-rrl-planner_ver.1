@@ -80,7 +80,7 @@ export function comparePolarization(r: LinkResult, ctx: ChannelContext): Polariz
     const dMin = minutesPerYear(cur.down - alt.down);
     const altBetter = alt.rate > cur.rate || (alt.rate === cur.rate && dMin >= 1);
     const curBetter = cur.rate > alt.rate || (alt.rate === cur.rate && dMin <= -1);
-    let t = a.pol === b.pol ? 'Сейчас оба канала на одной поляризации. Обычно их разносят: так проще развязать каналы на общей антенне. ' : '';
+    let t = a.pol === b.pol ? 'Сейчас оба ствола на одной поляризации. Обычно их разносят: так проще развязать стволы на общей антенне. ' : '';
     if (curBetter)
       t += `**Раскладка правильная:** ${a.tag} — ${a.pol}, ${b.tag} — ${b.pol}.` +
         (alt.rate < cur.rate ? ` Если поменять местами, скорость в норме упадёт с ${fmt(cur.rate, 1)} до ${fmt(alt.rate, 1)} Мбит/с.` : ` Если поменять местами, перерывов станет больше примерно на ${downtime(alt.down - cur.down)} в год.`);

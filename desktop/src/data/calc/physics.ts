@@ -110,6 +110,12 @@ export function multipathWorstMonth(dKm: number, fGHz: number, dN1: number, slop
   return Math.min(100, K * Math.pow(dKm, 3) * Math.pow(1 + slope, -1.2) * Math.pow(10, 0.033 * fGHz - 0.001 * hLowM - A / 10));
 }
 
+/** Multipath occurrence factor p0, % (the quick-method worst-month value at zero fade depth). */
+export function multipathP0(dKm: number, fGHz: number, dN1: number, slope: number, hLowM: number): number {
+  const K = Math.pow(10, -4.6 - 0.0027 * dN1);
+  return K * Math.pow(dKm, 3) * Math.pow(1 + slope, -1.2) * Math.pow(10, 0.033 * fGHz - 0.001 * hLowM);
+}
+
 /** Approximate required C/N for a modulation name, dB (used for cross-polar interference degradation). */
 export function requiredSnr(name: string): number {
   const t = String(name).toUpperCase();

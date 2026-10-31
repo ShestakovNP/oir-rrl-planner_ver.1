@@ -32,6 +32,9 @@ export function App() {
   const [sel, setSel] = useState<Selection>(null);
   const [mode, setMode] = useState<MapMode>('view');
   const [pending, setPending] = useState<string | null>(null);
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [freshLink, setFreshLink] = useState<string | null>(null);
+  useEffect(() => { if (freshLink && !(sel?.kind === 'link' && sel.id === freshLink)) setFreshLink(null); }, [sel, freshLink]);
   const [moving, setMoving] = useState<{ id: string; lat: number; lon: number } | null>(null);
   const [focus, setFocus] = useState<FocusRequest | null>(null);
   const [dialog, setDialog] = useState<DialogSpec | null>(null);
@@ -103,37 +106,84 @@ export function App() {
   }, [links, sites, results]);
 
   /* ---------- actions ---------- */
-  const autoProfile = useCallback(async (l: Link) => {
-    const a = sites.find((s) => s.id === l.siteA), b = sites.find((s) => s.id === l.siteB);
-    if (!a || !b || net === 'offline') return;
+  /*
+   * Terrain (SRTM) + buildings, forest and water (OpenStreetMap) load by themselves: for a new link,
+   * after an object is moved, and when a previous attempt failed and the network is back.
+   * Hand-entered profiles are never overwritten.
+   */
+  const coordKey = (a: { lat: number; lon: number }, b: { lat: number; lon: number }) => `${a.lat.toFixed(6)},${a.lon.toFixed(6)}|${b.lat.toFixed(6)},${b.lon.toFixed(6)}`;
+  const linksRef = useRef(links); linksRef.current = links;
+  const sitesRef = useRef(sites); sitesRef.current = sites;
+  const [loadingIds, setLoadingIds] = useState<Set<string>>(new Set());
+  const inflight = useRef<Set<string>>(new Set());
+  const failed = useRef<Map<string, string>>(new Map());
+  const autoProfile = useCallback(async (id: string) => {
+    const l0 = linksRef.current.find((x) => x.id === id);
+    const a = l0 && sitesRef.current.find((s) => s.id === l0.siteA), b = l0 && sitesRef.current.find((s) => s.id === l0.siteB);
+    if (!l0 || !a || !b || inflight.current.has(id)) return;
+    const key = coordKey(a, b);
+    inflight.current.add(id);
+    setLoadingIds(new Set(inflight.current));
+    const latest = () => linksRef.current.find((x) => x.id === id);
     try {
       const pts = await fetchTerrainProfile(a.lat, a.lon, b.lat, b.lon);
-      let upd: Link = { ...l, profile: pts, profileSource: 'srtm', profileFetchedAt: Date.now() };
-      store.updateLink(upd);
-      if (a.groundM == null) store.updateSite({ ...a, groundM: pts[0].g });
-      if (b.groundM == null) store.updateSite({ ...b, groundM: pts[pts.length - 1].g });
+      let cur = latest();
+      if (!cur) return;
+      store.updateLink({ ...cur, profile: pts, profileSource: 'srtm', profileFetchedAt: Date.now(), profileFor: key, clutterSource: 'none', clutterSummary: '' });
+      // Ground heights of the objects follow the terrain model.
+      const sa = sitesRef.current.find((s) => s.id === a.id), sb = sitesRef.current.find((s) => s.id === b.id);
+      if (sa) store.updateSite({ ...sa, groundM: Math.round(pts[0].g) });
+      if (sb) store.updateSite({ ...sb, groundM: Math.round(pts[pts.length - 1].g) });
       try {
-        const forestHeight = l.forestHeight ?? 20;
+        const forestHeight = l0.forestHeight ?? 20;
         const objs = await fetchClutterObjects(a.lat, a.lon, b.lat, b.lon, { forestHeight });
         const res = applyClutter(pts, a.lat, a.lon, b.lat, b.lon, objs, { forestHeight });
-        upd = { ...upd, profile: res.profile, clutterSource: 'osm', clutterFetchedAt: Date.now(), clutterSummary: res.summary };
-        store.updateLink(upd);
-        notify(`Рельеф загружен по SRTM. ${res.summary}`);
+        cur = latest();
+        if (cur && cur.profileSource === 'srtm') store.updateLink({ ...cur, profile: res.profile, clutterSource: 'osm', clutterFetchedAt: Date.now(), clutterSummary: res.summary });
+        failed.current.delete(id);
+        notify(`Профиль «${a.name} — ${b.name}» загружен. ${res.summary}`);
       } catch (e) {
-        notify(`Рельеф загружен, но здания и лес не получены: ${(e as Error).message} Их можно загрузить позже во вкладке «Профиль».`, true);
+        failed.current.set(id, key);
+        notify(`Рельеф «${a.name} — ${b.name}» загружен, а здания, лес и вода — нет: ${(e as Error).message} Программа повторит попытку, когда сеть восстановится.`, true);
       }
     } catch (e) {
-      notify(`Профиль не загружен: ${(e as Error).message} Его можно загрузить позже во вкладке «Профиль» или ввести вручную.`, true);
+      failed.current.set(id, key);
+      notify(`Профиль «${a.name} — ${b.name}» не загружен: ${(e as Error).message} Программа повторит попытку, когда сеть восстановится.`, true);
+    } finally {
+      inflight.current.delete(id);
+      setLoadingIds(new Set(inflight.current));
     }
-  }, [sites, net, store, notify]);
+  }, [store, notify]);
+
+  /* what needs loading: no profile, objects moved, or buildings/forest/water missing */
+  useEffect(() => {
+    if (net === 'offline') return;
+    const t = window.setTimeout(() => {
+      for (const l of links) {
+        const a = sites.find((s) => s.id === l.siteA), b = sites.find((s) => s.id === l.siteB);
+        if (!a || !b || inflight.current.has(l.id)) continue;
+        if (l.profileSource === 'manual') continue;
+        const key = coordKey(a, b);
+        if (failed.current.get(l.id) === key) continue;
+        const noProfile = l.profileSource !== 'srtm' || l.profile.length < 2;
+        if (l.profileSource === 'srtm' && !l.profileFor) { store.updateLink({ ...l, profileFor: key }); continue; }
+        const moved = l.profileSource === 'srtm' && l.profileFor !== key;
+        const noClutter = l.profileSource === 'srtm' && l.clutterSource !== 'osm' && l.clutterSource !== 'manual';
+        if (noProfile || moved || noClutter) void autoProfile(l.id);
+      }
+    }, 900);
+    return () => window.clearTimeout(t);
+  }, [links, sites, net, autoProfile, store]);
+  /* network is back: try failed links again */
+  useEffect(() => { if (net === 'online') failed.current.clear(); }, [net]);
 
   const createLink = async (a: string, b: string) => {
     try {
       const l = await store.addLink(a, b);
       setModal(null); setMode('view'); setPending(null);
       setTab('links');
+      setFreshLink(l.id);
       setSel({ kind: 'link', id: l.id });
-      void autoProfile(l);
     } catch (e) { fail(e); }
   };
 
@@ -173,7 +223,6 @@ export function App() {
   const onAction = async (a: FileAction) => {
     try {
       if (a === 'about') return setModal({ kind: 'about' });
-      if (a === 'guide') return store.setSetting('guideDone', false);
       if (a === 'clear-tiles') return setDialog({ title: 'Очистить кэш карты?', body: 'Загруженные ранее фрагменты карты удалятся. Без интернета карта будет пустой, пока вы снова не посмотрите эти места.', confirm: 'Очистить', danger: true, onConfirm: () => { void clearTileCache().then(() => notify('Кэш карты очищен.')); } });
       if (a === 'backup') {
         const b = await makeBackup(store.repo);
@@ -220,7 +269,7 @@ export function App() {
       const a = sites.find((s) => s.id === l.siteA), b = sites.find((s) => s.id === l.siteB);
       panel = (
         <LinkPanel
-          key={l.id} link={l} result={results.get(l.id)} notify={notify} onClose={() => setSel(null)}
+          key={l.id} link={l} result={results.get(l.id)} notify={notify} loading={loadingIds.has(l.id)} initialTab={freshLink === l.id ? 'input' : 'result'} onClose={() => setSel(null)}
           onFocus={() => a && b && focusOn([[a.lat, a.lon], [b.lat, b.lon]])}
           onReport={() => void saveReport([l], `Расчёт РРЛ ${a?.name ?? ''} — ${b?.name ?? ''}`)}
           onDelete={() => confirmDelete('Удалить пролёт?', `«${a?.name} — ${b?.name}» будет удалён вместе с профилем и настройками.`, async () => { await store.deleteLink(l.id); setSel(null); })}
@@ -257,7 +306,7 @@ export function App() {
 
   return (
     <div className="app">
-      <TopBar onAction={(a) => void onAction(a)} onPlace={(p) => focusOn([[p.lat, p.lon]])} />
+      <TopBar onAction={(a) => void onAction(a)} onPlace={(p) => focusOn([[p.lat, p.lon]])} guideOpen={guideOpen} onGuide={() => { setGuideOpen((o) => !o); if (!settings.guideDone) store.setSetting('guideDone', true); }} />
       <div className="main">
         <Sidebar
           tab={tab} setTab={setTab} selection={sel} select={(s) => { setSel(s); if (s?.kind === 'site') { const x = sites.find((y) => y.id === s.id); if (x) focusOn([[x.lat, x.lon]]); } if (s?.kind === 'link') { const l = links.find((y) => y.id === s.id); const a = sites.find((y) => y.id === l?.siteA), b = sites.find((y) => y.id === l?.siteB); if (a && b) focusOn([[a.lat, a.lon], [b.lat, b.lon]]); } }}
@@ -305,10 +354,10 @@ export function App() {
               </div>
             ) : null}
           </div>
-          {!settings.guideDone ? (
+          {guideOpen ? (
             <Guide
               linkOpen={sel?.kind === 'link'} sidebarTab={tab}
-              onClose={() => store.setSetting('guideDone', true)}
+              onClose={() => setGuideOpen(false)}
               onNewProject={newProject}
               onAddSiteMap={() => { setTab('sites'); setMode('add-site'); setSel(null); }}
               onAddSiteCoords={() => { setTab('sites'); setModal({ kind: 'add-site' }); }}

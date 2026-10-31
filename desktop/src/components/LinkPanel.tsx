@@ -1,6 +1,7 @@
 /** Detail panel of one link: results, inputs, terrain profile and full calculation. */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { Channel, Climate, Link, ModMode, ProfilePoint } from '../data/types';
+import type { Channel, Climate, Link, ModMode, ProfilePoint, Protection, ProtectionScheme } from '../data/types';
+import { SCHEME_NAMES, SCHEME_SHORT, defaultProtection } from '../data/calc/protection';
 import { channelsShareFrequency, type LinkResult } from '../data/calc/link';
 import { dishGain } from '../data/calc/physics';
 import { fmt, ghz } from '../data/calc/format';
@@ -20,11 +21,15 @@ interface Props {
   onReport(): void;
   onFocus(): void;
   notify(text: string, error?: boolean): void;
+  /** Terrain and map objects are being loaded automatically. */
+  loading?: boolean;
+  /** Tab to open first: a new link starts with the inputs, an existing one with the result. */
+  initialTab?: 'input' | 'result';
 }
 
-export function LinkPanel({ link, result, onClose, onDelete, onReport, onFocus, notify }: Props) {
+export function LinkPanel({ link, result, onClose, onDelete, onReport, onFocus, notify, loading, initialTab = 'result' }: Props) {
   const { sites, updateLink } = useStore();
-  const [tab, setTab] = useState<Tab>('result');
+  const [tab, setTab] = useState<Tab>(initialTab);
   const body = useRef<HTMLDivElement>(null);
   // Each tab opens from the top, not at the scroll position of the previous tab.
   useLayoutEffect(() => { if (body.current) body.current.scrollTop = 0; }, [tab, link.id]);
@@ -32,7 +37,7 @@ export function LinkPanel({ link, result, onClose, onDelete, onReport, onFocus, 
   useEffect(() => { window.dispatchEvent(new CustomEvent('oir:link-tab', { detail: tab })); }, [tab, link.id]);
   const A = sites.find((s) => s.id === link.siteA), B = sites.find((s) => s.id === link.siteB);
   const set = (patch: Partial<Link>) => updateLink({ ...link, ...patch });
-  const tabs: [Tab, string][] = [['result', 'Итог'], ['input', 'Исходные данные'], ['profile', 'Профиль'], ['detail', 'Подробно']];
+  const tabs: [Tab, string][] = [['input', 'Исходные данные'], ['profile', 'Профиль'], ['detail', 'Подробно'], ['result', 'Итог']];
 
   return (
     <aside className="panel wide" aria-label="Пролёт">
@@ -53,6 +58,7 @@ export function LinkPanel({ link, result, onClose, onDelete, onReport, onFocus, 
       </div>
       <div className="panel-body" ref={body}>
         {!A || !B ? <div className="notice">Один из объектов пролёта удалён.</div> : null}
+        {loading ? <div className="auto-load" role="status"><span className="spin" />Загружаю рельеф, здания, лес и воду на трассе… Расчёт обновится сам.</div> : null}
         {result && tab === 'result' ? (
           <>
             <Verdict r={result} />
@@ -62,7 +68,7 @@ export function LinkPanel({ link, result, onClose, onDelete, onReport, onFocus, 
           </>
         ) : null}
         {tab === 'input' ? <Inputs link={link} set={set} /> : null}
-        {tab === 'profile' && A && B ? <ProfileTab link={link} result={result} set={set} notify={notify} /> : null}
+        {tab === 'profile' && A && B ? <ProfileTab link={link} result={result} set={set} notify={notify} autoLoading={!!loading} /> : null}
         {result && tab === 'detail' ? (
           <>
             <div className="section"><h3>Результаты по режимам</h3><ModesTable r={result} /></div>
@@ -72,6 +78,66 @@ export function LinkPanel({ link, result, onClose, onDelete, onReport, onFocus, 
         ) : null}
       </div>
     </aside>
+  );
+}
+
+/* ---------------- protection ---------------- */
+
+const SCHEME_HINT: Record<ProtectionScheme, string> = {
+  '1+0': 'Одна антенна и одно ППУ на каждом конце.',
+  hsb: 'Два ППУ на одну антенну через делитель: при отказе оборудования работает резервное. От замираний не спасает, а делитель добавляет потери.',
+  sd: 'На объекте вторая антенна на другой высоте со своим приёмником. Пока одна попадает в замирание от многолучёвости, другая принимает. От дождя не спасает.',
+  fd: 'Два ствола на разных частотах по одной трассе. Помогает от многолучёвости, но требует вторую частоту.'
+};
+
+function ProtectionEditor({ link, set, nameA, nameB }: { link: Link; set(p: Partial<Link>): void; nameA: string; nameB: string }) {
+  const p = link.protection;
+  const scheme: ProtectionScheme = p?.scheme ?? '1+0';
+  const choose = (s: ProtectionScheme) => set({ protection: s === '1+0' ? { ...(p ?? defaultProtection(link, '1+0')), scheme: '1+0' } : { ...(p && p.scheme !== '1+0' ? p : defaultProtection(link, s)), scheme: s } });
+  const upd = (patch: Partial<Protection>) => set({ protection: { ...(p ?? defaultProtection(link, scheme)), ...patch } });
+  const id = (s: string) => `${link.id}-pr-${s}`;
+  return (
+    <div className="section">
+      <h3>Схема резервирования пролёта</h3>
+      <div className="scheme-grid" role="radiogroup" aria-label="Схема резервирования">
+        {(['1+0', 'hsb', 'sd', 'fd'] as ProtectionScheme[]).map((s) => (
+          <button key={s} type="button" role="radio" aria-checked={scheme === s} className={`scheme ${scheme === s ? 'on' : ''}`} onClick={() => choose(s)}>
+            <b>{SCHEME_SHORT[s]}</b><span>{SCHEME_NAMES[s].replace(/ \(.*\)$/, '')}</span>
+          </button>
+        ))}
+      </div>
+      <p className="hint">{SCHEME_HINT[scheme]}</p>
+      {scheme === 'hsb' && p ? (
+        <div className="grid2">
+          <Field label="Потери в делителе на каждом конце, дБ" htmlFor={id('hsb')} hint="несимметричный ≈ 1,5 дБ, симметричный ≈ 3,5 дБ"><NumField id={id('hsb')} value={p.hsbLossDb} min={0} max={10} onChange={(v) => upd({ hsbLossDb: v ?? 0 })} /></Field>
+        </div>
+      ) : null}
+      {scheme === 'sd' && p ? (
+        <>
+          <div className="grid2">
+            {([['A', nameA, 'sdA', 'hA2', 'dishA2', 'feederA2', link.hA], ['B', nameB, 'sdB', 'hB2', 'dishB2', 'feederB2', link.hB]] as const).map(([side, nm, on, h, d, f, hMain]) => (
+              <div key={side} className="sd-col">
+                <label className="check"><input type="checkbox" checked={p[on]} onChange={(e) => upd({ [on]: e.target.checked } as Partial<Protection>)} /> Вторая антенна на «{nm}»</label>
+                {p[on] ? (
+                  <>
+                    <Field label="Высота подвеса второй антенны, м" htmlFor={id(h)} hint={`основная — ${String(hMain).replace('.', ',')} м, разнос ${String(+Math.abs(hMain - p[h]).toFixed(1)).replace('.', ',')} м`}><NumField id={id(h)} value={p[h]} min={0} onChange={(v) => upd({ [h]: v ?? 0 } as Partial<Protection>)} /></Field>
+                    <Field label="Диаметр второй антенны, м" htmlFor={id(d)}><NumField id={id(d)} value={p[d]} min={0.05} onChange={(v) => upd({ [d]: v ?? 0.6 } as Partial<Protection>)} /></Field>
+                    <Field label="Потери в фидере второй антенны, дБ" htmlFor={id(f)}><NumField id={id(f)} value={p[f]} min={0} onChange={(v) => upd({ [f]: v ?? 0 } as Partial<Protection>)} /></Field>
+                  </>
+                ) : <p className="hint">Без второй антенны: направление на этот объект не улучшается.</p>}
+              </div>
+            ))}
+          </div>
+          {!p.sdA && !p.sdB ? <div className="notice">Отметьте хотя бы один объект со второй антенной.</div> : null}
+          <p className="hint">Обычно разнос по высоте 10–15 м (не меньше 150 длин волн), вторую антенну ставят ниже основной. Просвет для неё проверяется отдельно — смотрите «Подробно» и «Итог».</p>
+        </>
+      ) : null}
+      {scheme === 'fd' && p ? (
+        <div className="grid2">
+          <Field label="Разнос частот Δf, МГц" htmlFor={id('df')} hint={`${(+((p.fdSpacingMHz / (link.channels[0].freqMHz || 1)) * 100).toFixed(1)).toString().replace('.', ',')} % от частоты ствола 1; обычно 2–5 %`}><NumField id={id('df')} value={p.fdSpacingMHz} min={0} onChange={(v) => upd({ fdSpacingMHz: v ?? 0 })} /></Field>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -102,8 +168,9 @@ function Inputs({ link, set }: { link: Link; set(p: Partial<Link>): void }) {
   const id = (s: string) => `${link.id}-${s}`;
   return (
     <>
+      <ProtectionEditor link={link} set={set} nameA={A?.name ?? 'A'} nameB={B?.name ?? 'B'} />
       <div className="section">
-        <h3>Объекты и подвес антенн</h3>
+        <h3>Выбор высот подвеса антенн{link.protection?.scheme === 'sd' ? <span className="hint">основные антенны; вторые — в блоке «Схема резервирования»</span> : null}</h3>
         <div className="grid2">
           <div className="sub">{A?.name ?? 'A'}</div><div className="sub">{B?.name ?? 'B'}</div>
           <Field label="Высота подвеса, м" htmlFor={id('hA')} hint="над землёй"><NumField id={id('hA')} value={link.hA} min={0} onChange={(v) => set({ hA: v ?? 0 })} /></Field>
@@ -130,17 +197,17 @@ function Inputs({ link, set }: { link: Link; set(p: Partial<Link>): void }) {
       </div>
 
       <div className="section">
-        <h3>Каналы на антенне <span className="hint">до двух диапазонов на разных поляризациях</span></h3>
+        <h3>Основные параметры для двух диапазонов <span className="hint">частота, поляризация, ППУ и режимы — до двух стволов на одной антенне</span></h3>
         {([0, 1] as const).map((i) => <ChannelEditor key={i} i={i} link={link} ch={link.channels[i]} setCh={(p) => setCh(i, p)} />)}
         {channelsShareFrequency(link) ? (
           <div className="chan">
-            <div className="chan-head"><b>Развязка поляризаций антенн</b><span className="tag">каналы на одной частоте</span></div>
-            <p className="hint">Каналы работают на одной частоте в ортогональных поляризациях (схема CCDP), поэтому их взаимная помеха ограничена только кросс-поляризационной развязкой антенн (XPD). Для каналов в разных частотных диапазонах параметр не применяется. Значение XPD принимается по паспорту антенны.</p>
+            <div className="chan-head"><b>Развязка поляризаций антенн</b><span className="tag">стволы на одной частоте</span></div>
+            <p className="hint">Стволы работают на одной частоте в ортогональных поляризациях (схема CCDP), поэтому их взаимная помеха ограничена только кросс-поляризационной развязкой антенн (XPD). Для стволов в разных частотных диапазонах параметр не применяется. Значение XPD принимается по паспорту антенны.</p>
             <div className="grid2">
               <Field label={`XPD антенны «${A?.name ?? 'A'}», дБ`} htmlFor={id('xA')}><NumField id={id('xA')} value={link.xpdA} nullable placeholder="из паспорта" onChange={(v) => set({ xpdA: v })} /></Field>
               <Field label={`XPD антенны «${B?.name ?? 'B'}», дБ`} htmlFor={id('xB')}><NumField id={id('xB')} value={link.xpdB} nullable placeholder="из паспорта" onChange={(v) => set({ xpdB: v })} /></Field>
             </div>
-            {link.xpdA == null || link.xpdB == null ? <div className="notice">Пока XPD не введена, помеха между каналами не учитывается и запас завышен. Это касается только случая, когда оба канала в одном диапазоне частот.</div> : null}
+            {link.xpdA == null || link.xpdB == null ? <div className="notice">Пока XPD не введена, помеха между стволами не учитывается и запас завышен. Это касается только случая, когда оба ствола в одном диапазоне частот.</div> : null}
           </div>
         ) : null}
       </div>
@@ -174,7 +241,7 @@ function ChannelEditor({ i, link, ch, setCh }: { i: 0 | 1; link: Link; ch: Chann
   return (
     <div className="chan">
       <div className="chan-head">
-        {i === 0 ? <b>Канал 1</b> : <label className="check"><input type="checkbox" checked={ch.enabled} onChange={(e) => setCh({ enabled: e.target.checked })} /> Канал 2 на той же антенне</label>}
+        {i === 0 ? <b>Ствол 1</b> : <label className="check"><input type="checkbox" checked={ch.enabled} onChange={(e) => setCh({ enabled: e.target.checked })} /> Ствол 2 на той же антенне</label>}
         {ch.enabled || i === 0 ? <span className="tag">{ghz(ch.freqMHz)} · {ch.pol}</span> : null}
       </div>
       {ch.enabled || i === 0 ? (
@@ -248,7 +315,7 @@ function parsePts(text: string): { pts: ProfilePoint[]; bad: number[] } {
   return { pts, bad };
 }
 
-function ProfileTab({ link, result, set, notify }: { link: Link; result: LinkResult | undefined; set(p: Partial<Link>): void; notify(t: string, e?: boolean): void }) {
+function ProfileTab({ link, result, set, notify, autoLoading }: { link: Link; result: LinkResult | undefined; set(p: Partial<Link>): void; notify(t: string, e?: boolean): void; autoLoading: boolean }) {
   const { sites } = useStore();
   const A = sites.find((s) => s.id === link.siteA)!, B = sites.find((s) => s.id === link.siteB)!;
   const [text, setText] = useState(() => fmtPts(link.profile));
@@ -303,11 +370,11 @@ function ProfileTab({ link, result, set, notify }: { link: Link; result: LinkRes
     <>
       {result ? <ProfileChart r={result} height={240} linkId={link.id} notify={notify} /> : null}
       <div className="section">
-        <h3>Рельеф, здания, лес и вода с карты</h3>
-        <p className="hint">Высоты земли — из открытой базы SRTM 30 м (OpenTopoData). Здания, лесные массивы и водоёмы (реки, озёра, водохранилища) на трассе — из OpenStreetMap (Overpass API): высота здания берётся из карты (высота или этажность), если её нет — типовая для вида здания; для леса — высота, указанная ниже. Над водой рассчитывается отражение луча от водной глади (см. «Подробно»). Ключи не нужны. После загрузки всё хранится в программе и работает без интернета.</p>
+        <h3>Рельеф, здания, лес и вода с карты <span className="hint">загружаются автоматически</span></h3>
+        <p className="hint">Высоты земли — из открытой базы SRTM 30 м (OpenTopoData). Здания, лесные массивы и водоёмы (реки, озёра, водохранилища) на трассе — из OpenStreetMap (Overpass API): высота здания берётся из карты (высота или этажность), если её нет — типовая для вида здания; для леса — высота, указанная ниже. Над водой рассчитывается отражение луча от водной глади (см. «Подробно»). Загрузка идёт сама: при создании пролёта, после переноса объекта и при восстановлении сети, если раньше не получилось. Кнопки ниже — чтобы обновить вручную. Ключи не нужны; после загрузки всё хранится в программе и работает без интернета. Профиль, введённый вручную, программа не перезаписывает.</p>
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-          <button type="button" className="btn primary" onClick={() => void loadAll(true)} disabled={!!busy}><Icon name="mountain" />{link.profileSource === 'srtm' ? 'Загрузить заново' : 'Загрузить рельеф, здания, лес и воду'}</button>
-          <button type="button" className="btn" onClick={() => void loadAll(false)} disabled={!!busy || link.profile.length < 2} title="Рельеф не трогать, обновить только здания, лес и воду">Обновить только здания, лес и воду</button>
+          <button type="button" className="btn primary" onClick={() => void loadAll(true)} disabled={!!busy || autoLoading}><Icon name="mountain" />{link.profileSource === 'srtm' ? 'Загрузить заново' : 'Загрузить сейчас'}</button>
+          <button type="button" className="btn" onClick={() => void loadAll(false)} disabled={!!busy || autoLoading || link.profile.length < 2} title="Рельеф не трогать, обновить только здания, лес и воду">Обновить только здания, лес и воду</button>
           <Field label="Высота леса, м" htmlFor={`${link.id}-fh`}><NumField id={`${link.id}-fh`} value={forestH} min={0} max={60} onChange={(v) => set({ forestHeight: v ?? 20 })} /></Field>
         </div>
         {busy ? <><div className="hint">{busy}</div><div className="progress" aria-label={busy}><div style={{ width: `${Math.max(8, progress * 100)}%` }} /></div></> : null}

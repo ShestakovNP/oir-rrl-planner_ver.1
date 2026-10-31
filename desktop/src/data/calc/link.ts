@@ -5,12 +5,14 @@
 import type { Channel, Climate, Link, ModMode, Pol, ProfilePoint, Site } from '../types';
 import { deg, vincenty, type Geodesic } from './geo';
 import {
-  EARTH_R_KM, beamwidth, dishGain, fsl, gasAttenuation, knifeEdge, multipathWorstMonth, rainModel, requiredSnr, type RainModel
+  EARTH_R_KM, beamwidth, dishGain, fsl, gasAttenuation, knifeEdge, multipathP0, multipathWorstMonth, rainModel, requiredSnr, type RainModel
 } from './physics';
 import { downtime, fmt, ghz, polName } from './format';
 import { buildRecommendations, type Rec } from './recommend';
 import { comparePolarization, type PolarizationResult } from './polarization';
 import { waterReflection, waterShare, type WaterReflection } from './water';
+import { SCHEME_SHORT, diversityValidity, fdImprovement, protectionOf, sdImprovement } from './protection';
+import type { ProtectionScheme } from '../types';
 
 export interface Sample {
   d: number;
@@ -89,6 +91,40 @@ export interface ChannelResult {
   marginRequired: number;
   /** Reflection from water on the path (null = no water under the reflection point). */
   refl: WaterReflection | null;
+  /** Protection / diversity details (null = 1+0). */
+  div: DiversityResult | null;
+}
+
+export interface DiversityBranch {
+  /** Height of the second antenna above ground, m. */
+  h: number;
+  /** Vertical spacing between the antennas, m. */
+  S: number;
+  /** Level difference main − diversity antenna, dB. */
+  V: number;
+  /** Gain of the diversity antenna, dB. */
+  gain: number;
+  /** Clearance of the diversity antenna, share of the first Fresnel zone, at k and at kMin. */
+  rel: number | null;
+  relMin: number | null;
+  diff: number;
+  /** Improvement factor at the reference mode margin. */
+  I: number;
+}
+export interface DiversityResult {
+  scheme: ProtectionScheme;
+  /** SD branches: at A (improves the B→A direction) and at B (A→B). */
+  a: DiversityBranch | null;
+  b: DiversityBranch | null;
+  /** FD improvement at the reference margin. */
+  I: number;
+  /** HSB coupler loss counted in the budget (both ends), dB. */
+  hsbLoss: number;
+  /** Multipath outage at the reference mode without and with diversity, % of year. */
+  mpPlain: number;
+  mpDiv: number;
+  /** Where the P.530 formula leaves its validated range. */
+  validity: string[];
 }
 
 export type Level = 'ok' | 'warn' | 'bad' | 'info';
@@ -246,10 +282,39 @@ export function calcChannel(ctx: Ctx, ch: Channel, n: 1 | 2, polOverride?: Pol):
   const gas = gasK * D;
   const gAcalc = dishGain(link.dishA, fGHz), gBcalc = dishGain(link.dishB, fGHz);
   const gA = ch.gainA ?? gAcalc, gB = ch.gainB ?? gBcalc;
-  const fixed = gA + gB - link.feederA - link.feederB - link.otherLoss - 2 * ch.combinerLossDb;
+  const prot = protectionOf(link);
+  const hsbLoss = prot?.scheme === 'hsb' ? 2 * Math.max(0, prot.hsbLossDb || 0) : 0;
+  const fixed = gA + gB - link.feederA - link.feederB - link.otherLoss - 2 * ch.combinerLossDb - hsbLoss;
   const rain = rainModel(fGHz, D, link.climate.rainR001, pol);
   const c = link.climate;
   const refl = waterReflection(path, geom.s, k, kMin, fGHz, pol, link.dishA, link.dishB);
+  /* diversity: improvement of the multipath term only */
+  const c0 = link.climate;
+  const p0 = multipathP0(D, fGHz, c0.dN1, slope, hLow);
+  const branch = (at: 'A' | 'B'): (Omit<DiversityBranch, 'I'> & { Ifn(M: number): number }) | null => {
+    if (prot?.scheme !== 'sd' || !(at === 'A' ? prot.sdA : prot.sdB)) return null;
+    const h2 = at === 'A' ? prot.hA2 : prot.hB2;
+    const P2 = at === 'A' ? { ...path, hA: h2, HA: path.gA0 + h2 } : { ...path, hB: h2, HB: path.gB0 + h2 };
+    const g2 = geometry(P2, k, fGHz), g2min = geometry(P2, kMin, fGHz);
+    const diff2 = g2.crit ? Math.max(0, knifeEdge(g2.crit.H, g2.crit.F1)) : 0;
+    const dish2 = at === 'A' ? prot.dishA2 : prot.dishB2, dishMain = at === 'A' ? link.dishA : link.dishB;
+    // Same dish as the main one: take the main antenna gain (it may come from the datasheet).
+    const gain2 = Math.abs(dish2 - dishMain) < 1e-6 ? (at === 'A' ? gA : gB) : dishGain(dish2, fGHz);
+    const gMain = at === 'A' ? gA - link.feederA : gB - link.feederB;
+    const gDiv = gain2 - (at === 'A' ? prot.feederA2 : prot.feederB2);
+    const V = gMain - diff - (gDiv - diff2);
+    const S = Math.abs((at === 'A' ? link.hA : link.hB) - h2);
+    return { h: h2, S, V, gain: gain2, rel: g2.crit ? g2.crit.rel : null, relMin: g2min.crit ? g2min.crit.rel : null, diff: diff2, Ifn: (M: number) => sdImprovement(S, fGHz, D, p0, M, V) };
+  };
+  const brA = branch('A'), brB = branch('B');
+  const fdSpacing = prot?.scheme === 'fd' ? Math.max(0, prot.fdSpacingMHz || 0) / 1000 : 0;
+  /** Worst-direction improvement factor for a fade margin M. */
+  const improve = (M: number): number => {
+    if (prot?.scheme === 'fd') return fdImprovement(fdSpacing, fGHz, D, M);
+    if (prot?.scheme === 'sd') return Math.min(brA ? brA.Ifn(M) : 1, brB ? brB.Ifn(M) : 1);
+    return 1;
+  };
+  const mpOf = (M: number) => multipathWorstMonth(D, fGHz, c0.dN1, slope, hLow, M) / improve(M);
   const reflLoss = refl ? refl.applied : 0;
   const modes: ModeResult[] = ch.modes
     .filter((m) => Number.isFinite(m.txDbm) && Number.isFinite(m.thresholdDbm))
@@ -257,7 +322,7 @@ export function calcChannel(ctx: Ctx, ch: Channel, n: 1 | 2, polOverride?: Pol):
       const degr = Number.isFinite(ci) ? 10 * Math.log10(1 + Math.pow(10, (requiredSnr(m.name) - ci) / 10)) : 0;
       const prx = m.txDbm + fixed - FSL - diff - gas - reflLoss;
       const margin = prx - m.thresholdDbm - degr;
-      const mpMonth = multipathWorstMonth(D, fGHz, c.dN1, slope, hLow, margin);
+      const mpMonth = mpOf(margin);
       const mpYear = mpMonth * c.monthToYear;
       const rainYear = rain.pFor(margin);
       const u = Math.min(100, mpYear + rainYear);
@@ -269,7 +334,7 @@ export function calcChannel(ctx: Ctx, ch: Channel, n: 1 | 2, polOverride?: Pol):
   const best = pick(okList);
   const top = pick(working);
   const next = modes.slice().sort((a, b) => a.rateMbps - b.rateMbps).find((r) => !r.ok && (!best || r.rateMbps > best.rateMbps)) || null;
-  const unav = (M: number) => Math.min(100, multipathWorstMonth(D, fGHz, c.dN1, slope, hLow, M) * c.monthToYear + rain.pFor(M));
+  const unav = (M: number) => Math.min(100, mpOf(M) * c.monthToYear + rain.pFor(M));
   let lo = 0, hi = 90;
   for (let i = 0; i < 40; i++) {
     const m = (lo + hi) / 2;
@@ -277,9 +342,18 @@ export function calcChannel(ctx: Ctx, ch: Channel, n: 1 | 2, polOverride?: Pol):
     else hi = m;
   }
   return {
-    n, ch, tag: 'К' + n, label: `${ghz(ch.freqMHz)} · ${polName(pol)}`, fGHz, pol, geom, geomMin, FSL, diff, diffMin, gasK, gas,
+    n, ch, tag: 'Ст' + n, label: `${ghz(ch.freqMHz)} · ${polName(pol)}`, fGHz, pol, geom, geomMin, FSL, diff, diffMin, gasK, gas,
     gA, gB, gAcalc, gBcalc, beamA: beamwidth(link.dishA, fGHz), beamB: beamwidth(link.dishB, fGHz), fixed, rain, modes,
-    best, working, top, next, ref: best || working[0] || modes[0] || null, marginRequired: hi, refl
+    best, working, top, next, ref: best || working[0] || modes[0] || null, marginRequired: hi, refl,
+    div: prot ? (() => {
+      const refM = (best || working[0] || modes[0])?.margin ?? 0;
+      const fin = (b: typeof brA): DiversityBranch | null => (b ? { h: b.h, S: b.S, V: b.V, gain: b.gain, rel: b.rel, relMin: b.relMin, diff: b.diff, I: b.Ifn(refM) } : null);
+      const plain = multipathWorstMonth(D, fGHz, c.dN1, slope, hLow, refM) * c.monthToYear;
+      const Ss = [brA?.S, brB?.S].filter((x): x is number => x != null);
+      const validity = prot.scheme === 'sd' ? diversityValidity('sd', fGHz, D, Ss.length ? Math.min(...Ss) : undefined)
+        : prot.scheme === 'fd' ? diversityValidity('fd', fGHz, D, undefined, fdSpacing / fGHz) : [];
+      return { scheme: prot.scheme, a: fin(brA), b: fin(brB), I: prot.scheme === 'fd' ? fdImprovement(fdSpacing, fGHz, D, refM) : improve(refM), hsbLoss, mpPlain: plain, mpDiv: plain / improve(refM), validity };
+    })() : null
   };
 }
 
@@ -300,7 +374,7 @@ export function calculateLink(link: Link, A: Site, B: Site): LinkResult {
   const channels = link.channels
     .map((ch, i) => ({ ch, n: (i + 1) as 1 | 2 }))
     .filter(({ ch, n }) => (n === 1 || ch.enabled) && ch.freqMHz > 0);
-  if (!channels.length) errors.push('Укажите частоту канала 1.');
+  if (!channels.length) errors.push('Укажите частоту ствола 1.');
   const lowest = channels.length ? channels.reduce((a, b) => (b.ch.freqMHz < a.ch.freqMHz ? b : a)) : null;
   const fRef = lowest ? lowest.ch.freqMHz / 1000 : 6;
   const geom = geometry(path, k, fRef);
@@ -343,11 +417,13 @@ export function calculateLink(link: Link, A: Site, B: Site): LinkResult {
       sub = r.modes.length ? 'Уровень сигнала ниже порога во всех режимах. Нужны антенны больше, выше мощность или короче пролёт.' : 'Добавьте режимы модуляции ППУ.';
     }
   } else {
-    title = allOk ? `Пролёт ${nm} рабочий. Два канала дают ${fmt(totalRate, 1)} Мбит/с в пределах нормы`
-      : someOk ? `Норму выполняет только один канал: ${fmt(totalRate, 1)} Мбит/с`
-      : anyWork ? 'Связь будет, но норму не выполняет ни один канал' : 'Сигнала не хватает ни в одном канале';
+    title = allOk ? `Пролёт ${nm} рабочий. Два ствола дают ${fmt(totalRate, 1)} Мбит/с в пределах нормы`
+      : someOk ? `Норму выполняет только один ствол: ${fmt(totalRate, 1)} Мбит/с`
+      : anyWork ? 'Связь будет, но норму не выполняет ни один ствол' : 'Сигнала не хватает ни в одном стволе';
     sub = results.map((r) => `${r.tag} (${r.label}): ${r.best ? `${r.best.name}, ${fmt(r.best.rateMbps, 1)} Мбит/с, перерывы ≈ ${downtime(r.best.u)} в год` : 'норма не выполняется'}`).join('. ') + `. Допустимо ${downtime(uNorm)} в год.`;
   }
+  const protN = protectionOf(link);
+  if (protN && !errors.length) sub += ` Схема резервирования: ${SCHEME_SHORT[protN.scheme]}.`;
   const label = level === 'ok' ? 'Норма выполнена' : level === 'warn' ? 'Норма выполнена не везде' : errors.length ? 'Ошибка данных' : 'Связи нет';
 
   const base: LinkResult = {

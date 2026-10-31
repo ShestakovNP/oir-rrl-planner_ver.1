@@ -73,6 +73,32 @@ export interface Climate {
   availabilityPct: number;
 }
 
+/**
+ * Protection of the hop:
+ *  - '1+0'  no redundancy;
+ *  - 'hsb'  1+1 hot standby: two radios on one antenna through a coupler (equipment redundancy only);
+ *  - 'sd'   1+1 space diversity: a second antenna on the same object at another height;
+ *  - 'fd'   1+1 frequency diversity: two frequencies on the same antennas.
+ */
+export type ProtectionScheme = '1+0' | 'hsb' | 'sd' | 'fd';
+export interface Protection {
+  scheme: ProtectionScheme;
+  /** SD: second antenna at A, at B or at both ends. */
+  sdA: boolean;
+  sdB: boolean;
+  /** SD: height above ground, dish diameter and feeder loss of the second (diversity) antenna. */
+  hA2: number;
+  hB2: number;
+  dishA2: number;
+  dishB2: number;
+  feederA2: number;
+  feederB2: number;
+  /** HSB: coupler loss on the working path at each end, dB. */
+  hsbLossDb: number;
+  /** FD: spacing between the two frequencies, MHz. */
+  fdSpacingMHz: number;
+}
+
 export interface Link {
   id: string;
   projectId: string;
@@ -95,12 +121,16 @@ export interface Link {
   profile: ProfilePoint[];
   profileSource: 'none' | 'manual' | 'srtm';
   profileFetchedAt: number | null;
+  /** Object coordinates the SRTM profile was loaded for; a mismatch means the objects moved. */
+  profileFor?: string;
   /** Where the clutter column (buildings, forest) came from. */
   clutterSource?: 'none' | 'manual' | 'osm';
   clutterFetchedAt?: number | null;
   clutterSummary?: string;
   /** Forest height used for OSM forest areas, m. */
   forestHeight?: number;
+  /** Link protection (redundancy) scheme; absent = 1+0. */
+  protection?: Protection;
   /** Magnetic declination, degrees (east +). null = not set. */
   declination: number | null;
   notes: string;

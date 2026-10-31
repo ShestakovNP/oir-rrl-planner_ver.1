@@ -1,7 +1,9 @@
 /** PDF reports: one link, or a whole project (summary page + one section per link). */
 import { PdfDoc } from './pdf/writer';
 import type { Link, Project } from '../data/types';
-import { surfaceRuns, type Level, type LinkResult } from '../data/calc/link';
+import { protectionRows } from '../data/calc/protectionText';
+import { SCHEME_NAMES } from '../data/calc/protection';
+import { geometry, surfaceRuns, type Level, type LinkResult } from '../data/calc/link';
 import { downtime, fmt, ghz, pct, polLong, polName, stripMarks } from '../data/calc/format';
 import { formatDms, n360 } from '../data/calc/geo';
 import { APP_NAME, ORG_FULL } from '../config';
@@ -11,7 +13,7 @@ export interface ReportItem { link: Link; result: LinkResult }
 const C = {
   ink: '#1a2129', muted: '#5a6876', body: '#36414c', line: '#d3dbe2', soft: '#f2f5f8', accent: '#1d5bb8', accentSoft: '#e2ebf8',
   ok: '#1c7f47', okSoft: '#e1f2e8', warn: '#9a6513', warnSoft: '#f7ebd6', bad: '#b53a2a', badSoft: '#f8e3df',
-  ground: '#c3cad1', groundEdge: '#6f7b86', forest: '#3b8a57', building: '#b0703f', water: '#2b8fe0', clutter: '#7f8f6a', fresnel: '#cfdcf0', fresnelEdge: '#7d9fd4', navy: '#0e2a47', teal: '#38c6b0', blue: '#4fa3ff'
+  ground: '#c3cad1', groundEdge: '#6f7b86', forest: '#3b8a57', building: '#b0703f', sd: '#d27a12', water: '#2b8fe0', clutter: '#7f8f6a', fresnel: '#cfdcf0', fresnelEdge: '#7d9fd4', navy: '#0e2a47', teal: '#38c6b0', blue: '#4fa3ff'
 };
 const SEM: Record<Level, string> = { ok: C.ok, warn: C.warn, bad: C.bad, info: C.accent };
 const SEMS: Record<Level, string> = { ok: C.okSoft, warn: C.warnSoft, bad: C.badSoft, info: C.accentSoft };
@@ -145,6 +147,17 @@ function profileChart(L: Layout, r: LinkResult) {
     if (part.length === 1) pdf.circle(X(part[0].d), Y(part[0].g), 1.5, { fill: C.water });
   });
   pdf.line(X(0), Y(P.HA), X(P.D), Y(P.HB), { stroke: C.accent, w: 1.2 });
+  // Space diversity: ray and Fresnel zone of each second antenna.
+  const dv = r.channels.find((c) => c.div?.scheme === 'sd')?.div;
+  const fLow = r.channels.reduce((a, b) => (b.fGHz < a.fGHz ? b : a)).fGHz;
+  ([['a', dv?.a], ['b', dv?.b]] as const).forEach(([key, b]) => {
+    if (!b) return;
+    const P2 = key === 'a' ? { ...P, HA: P.gA0 + b.h } : { ...P, HB: P.gB0 + b.h };
+    const s2 = geometry(P2, r.k, fLow).s;
+    pdf.poly([...s2.map((o) => [X(o.d), Y(o.los + o.F1)] as [number, number]), ...s2.slice().reverse().map((o) => [X(o.d), Y(o.los - o.F1)] as [number, number])], { stroke: C.sd, w: 0.5, dash: [2, 1.5] });
+    pdf.line(X(0), Y(P2.HA), X(P.D), Y(P2.HB), { stroke: C.sd, w: 1 });
+    pdf.circle(key === 'a' ? X(0) : X(P.D), Y((key === 'a' ? P.gA0 : P.gB0) + b.h), 2, { fill: C.sd });
+  });
   pdf.line(X(0), Y(P.gA0), X(0), Y(P.HA), { stroke: C.ink, w: 1.5 });
   pdf.line(X(P.D), Y(P.gB0), X(P.D), Y(P.HB), { stroke: C.ink, w: 1.5 });
   pdf.text(X(0) + 5, Y(P.HA) - 5, `${r.siteA.name} · ${fmt(P.hA, 0)} м`, { size: 8, bold: true });
@@ -153,7 +166,7 @@ function profileChart(L: Layout, r: LinkResult) {
   if (c) { const cx = X(c.d); pdf.line(cx, Y(c.top), cx, Y(c.los), { stroke: C.bad, w: 1, dash: [2, 2] }); pdf.circle(cx, Y(c.top), 2.2, { fill: C.bad }); }
   L.y += ph;
   let lx = M;
-  ([['Рельеф', C.ground], ['Здания', C.building], ['Лес', C.forest], ['Вода', C.water], ['Зона Френеля', C.fresnel], ['Луч', C.accent], ['Узкое место', C.bad]] as const).forEach(([t, col]) => {
+  ([['Рельеф', C.ground], ['Здания', C.building], ['Лес', C.forest], ['Вода', C.water], ['Зона Френеля', C.fresnel], ['Луч', C.accent], ...(dv?.a || dv?.b ? [['Вторая антенна', C.sd]] : []), ['Узкое место', C.bad]] as [string, string][]).forEach(([t, col]) => {
     pdf.rect(lx, L.y + 2, 10, 6, { fill: col });
     pdf.text(lx + 14, L.y + 8, t, { size: 7.5, color: C.muted });
     lx += pdf.width(t, 7.5) + 30;
@@ -194,7 +207,7 @@ function linkSection(L: Layout, it: ReportItem, project: Project | null, date: s
   const facts: [string, string, string][] = [
     ['Длина пролёта', fmt(r.path.D, 2), 'км'],
     ['Просвет', r.clearance.rel == null ? '—' : r.clearance.rel > 3 ? '> 300%' : Math.round(r.clearance.rel * 100) + '%', r.clearance.label.toLowerCase()],
-    r.multi ? ['Скорость в норме', fmt(r.totalRate, 1), 'Мбит/с, сумма каналов'] : ['Запас' + (r.channels[0]?.ref ? ' ' + r.channels[0].ref.name : ''), r.channels[0]?.ref ? fmt(r.channels[0].ref.margin, 1) : '—', 'дБ']
+    r.multi ? ['Скорость в норме', fmt(r.totalRate, 1), 'Мбит/с, сумма стволов'] : ['Запас' + (r.channels[0]?.ref ? ' ' + r.channels[0].ref.name : ''), r.channels[0]?.ref ? fmt(r.channels[0].ref.margin, 1) : '—', 'дБ']
   ];
   const fw = (CW - 20) / 3;
   facts.forEach((f, i) => {
@@ -217,11 +230,18 @@ function linkSection(L: Layout, it: ReportItem, project: Project | null, date: s
     row(['Высота антенны над уровнем моря, м', fmt(r.path.HA, 0), fmt(r.path.HB, 0)]),
     row(['Антенна', `${link.antennaA ? link.antennaA + ', ' : ''}${fmt(link.dishA, 1)} м`, `${link.antennaB ? link.antennaB + ', ' : ''}${fmt(link.dishB, 1)} м`]),
     ...(r.coChannel ? [row(['Развязка поляризаций (XPD), дБ', link.xpdA != null ? fmt(link.xpdA, 0) : 'не указана', link.xpdB != null ? fmt(link.xpdB, 0) : 'не указана'])] : []),
-    row(['Потери в фидере, дБ', fmt(link.feederA, 1), fmt(link.feederB, 1)])
+    row(['Потери в фидере, дБ', fmt(link.feederA, 1), fmt(link.feederB, 1)]),
+    ...(link.protection && link.protection.scheme !== '1+0' ? [row(['Схема резервирования', SCHEME_NAMES[link.protection.scheme], ''])] : []),
+    ...(link.protection?.scheme === 'sd' ? [
+      row(['Вторая антенна: высота подвеса, м', link.protection.sdA ? fmt(link.protection.hA2, 0) : '—', link.protection.sdB ? fmt(link.protection.hB2, 0) : '—']),
+      row(['Вторая антенна: диаметр, м; фидер, дБ', link.protection.sdA ? `${fmt(link.protection.dishA2, 1)}; ${fmt(link.protection.feederA2, 1)}` : '—', link.protection.sdB ? `${fmt(link.protection.dishB2, 1)}; ${fmt(link.protection.feederB2, 1)}` : '—'])
+    ] : []),
+    ...(link.protection?.scheme === 'hsb' ? [row(['Потери в делителе HSB, дБ', fmt(link.protection.hsbLossDb, 1), fmt(link.protection.hsbLossDb, 1)])] : []),
+    ...(link.protection?.scheme === 'fd' ? [row(['Разнос частот FD, МГц', fmt(link.protection.fdSpacingMHz, 0), ''])] : [])
   ]);
 
-  L.h2('Радиоканалы');
-  L.table([{ t: 'Параметр', w: 42 }, ...r.channels.map((c) => ({ t: r.multi ? 'Канал ' + c.n : 'Канал', w: 58 / r.channels.length }))], [
+  L.h2('Стволы');
+  L.table([{ t: 'Параметр', w: 42 }, ...r.channels.map((c) => ({ t: r.multi ? 'Ствол ' + c.n : 'Ствол', w: 58 / r.channels.length }))], [
     row(['ППУ (приёмо-передающее устройство)', ...r.channels.map((c) => c.ch.radioName || '—')]),
     row(['Частота, МГц', ...r.channels.map((c) => fmt(c.ch.freqMHz, 0))]),
     row(['Полоса, МГц', ...r.channels.map((c) => fmt(c.ch.bwMHz, 0))]),
@@ -251,7 +271,7 @@ function linkSection(L: Layout, it: ReportItem, project: Project | null, date: s
   L.para(`Допустимая неготовность: ${pct(r.uNorm)} в год (${downtime(r.uNorm)}), доступность ${fmt(r.climate.availabilityPct, 5)} %. «Запас» — на сколько децибел сигнал может ослабнуть, прежде чем связь оборвётся.`, { size: 8.5, color: C.muted });
   L.y += 4;
   r.channels.forEach((c) => {
-    if (r.multi) L.h3(`Канал ${c.n} · ${c.label}`);
+    if (r.multi) L.h3(`Ствол ${c.n} · ${c.label}`);
     L.table(
       [{ t: 'Режим', w: 14 }, { t: 'Мбит/с', w: 10, align: 'right' }, { t: 'Мощность, дБм', w: 12, align: 'right' }, { t: 'Порог, дБм', w: 11, align: 'right' }, { t: 'Сигнал, дБм', w: 11, align: 'right' }, { t: 'Запас, дБ', w: 10, align: 'right' }, { t: 'Перерывы в год', w: 13, align: 'right' }, { t: 'Доступность', w: 13, align: 'right' }, { t: 'Итог', w: 12 }],
       c.modes.map((m) => {
@@ -264,13 +284,13 @@ function linkSection(L: Layout, it: ReportItem, project: Project | null, date: s
   if (r.polarization.channels.length) {
     L.h2('Выбор поляризации');
     r.polarization.channels.forEach((pc) => {
-      if (r.multi) L.h3(`Канал ${pc.n} · ${pc.freq}`);
+      if (r.multi) L.h3(`Ствол ${pc.n} · ${pc.freq}`);
       L.table([{ t: 'Поляризация', w: 34 }, { t: 'Ослабление в ливень', w: 20, align: 'right' }, { t: 'Перерывы в год' + (pc.refName ? ' на ' + pc.refName : ''), w: 22, align: 'right' }, { t: 'Макс. скорость в норме', w: 24, align: 'right' }],
         pc.options.map((o) => row([{ t: polLong(o.pol) + (o.current ? ' (сейчас)' : ''), bold: o.current }, fmt(o.rainA001, 1) + ' дБ', o.ref ? (o.ref.margin > 0 ? downtime(o.ref.u) : 'всегда') : '—', o.best ? `${o.best.name}, ${fmt(o.best.rateMbps, 1)} Мбит/с` : 'нет'], o.winner ? { bg: C.okSoft, mark: C.ok } : {})));
       L.para(pc.verdict, { size: 9 });
       L.y += 4;
     });
-    if (r.polarization.pair) { L.h3('Раскладка двух каналов'); L.para(r.polarization.pair, { size: 9 }); }
+    if (r.polarization.pair) { L.h3('Раскладка двух стволов'); L.para(r.polarization.pair, { size: 9 }); }
   }
 
   L.h2('Рекомендации');
@@ -292,7 +312,7 @@ function linkSection(L: Layout, it: ReportItem, project: Project | null, date: s
     row(['Допустимая неготовность', { t: 'из нормы', color: C.muted }, { t: `${pct(r.uNorm)} · ${downtime(r.uNorm)}`, bold: true }])
   ];
   r.channels.forEach((c) => {
-    steps.push(row([{ t: r.multi ? `Канал ${c.n} · ${c.label}` : c.label, bold: true, color: C.accent }, '', ''], { bg: C.accentSoft }));
+    steps.push(row([{ t: r.multi ? `Ствол ${c.n} · ${c.label}` : c.label, bold: true, color: C.accent }, '', ''], { bg: C.accentSoft }));
     steps.push(row(['Потери в свободном пространстве', { t: 'ослабление из-за расстояния', color: C.muted }, { t: fmt(c.FSL, 1) + ' дБ', bold: true }]));
     steps.push(row(['Коэффициент усиления антенн A / B', { t: c.ch.gainA == null || c.ch.gainB == null ? 'расчётный из диаметра или по паспорту' : 'по паспорту', color: C.muted }, { t: `${fmt(c.gA, 1)} / ${fmt(c.gB, 1)} дБ`, bold: true }]));
     steps.push(row(['Потери на препятствии', { t: `при k = ${fmt(r.k, 2)}; в плохую погоду ${fmt(c.diffMin, 1)} дБ`, color: C.muted }, { t: fmt(c.diff, 1) + ' дБ', bold: true }]));
@@ -303,6 +323,7 @@ function linkSection(L: Layout, it: ReportItem, project: Project | null, date: s
       if (!w.blocked && w.rho >= 0.1) steps.push(row(['Худшее замирание от отражения', { t: `при k = ${fmt(w.kWorst, 2)}; разнесение A/B ${fmt(w.spacingA, 1)}/${fmt(w.spacingB, 1)} м`, color: C.muted }, { t: fmt(w.worst, 1) + ' дБ', bold: true }]));
     }
     if (c.ref) steps.push(row([`Сигнал на приёмнике, ${c.ref.name}`, { t: `мощность ${fmt(c.ref.txDbm, 1)} дБм + антенны − потери`, color: C.muted }, { t: fmt(c.ref.prx, 1) + ' дБм', bold: true }]));
+    protectionRows(r, c).forEach((x) => steps.push(row([x.t, { t: x.s, color: C.muted }, { t: x.v, bold: true }])));
     steps.push(row(['Запас, нужный для нормы', { t: 'чтобы перерывов было не больше допустимого', color: C.muted }, { t: fmt(c.marginRequired, 1) + ' дБ', bold: true }]));
     steps.push(row(['Дождь: ослабление в ливень', { t: `${fmt(r.climate.rainR001, 0)} мм/ч, ${fmt(c.rain.gamma, 3)} дБ/км`, color: C.muted }, { t: fmt(c.rain.A001, 1) + ' дБ', bold: true }]));
   });
