@@ -35,6 +35,7 @@ export function App() {
   const [guideOpen, setGuideOpen] = useState(false);
   const [freshLink, setFreshLink] = useState<string | null>(null);
   useEffect(() => { if (freshLink && !(sel?.kind === 'link' && sel.id === freshLink)) setFreshLink(null); }, [sel, freshLink]);
+  const [searchMark, setSearchMark] = useState<{ lat: number; lon: number; name: string; detail: string } | null>(null);
   const [moving, setMoving] = useState<{ id: string; lat: number; lon: number } | null>(null);
   const [focus, setFocus] = useState<FocusRequest | null>(null);
   const [dialog, setDialog] = useState<DialogSpec | null>(null);
@@ -315,7 +316,7 @@ export function App() {
 
   return (
     <div className="app">
-      <TopBar onAction={(a) => void onAction(a)} onPlace={(p) => focusOn([[p.lat, p.lon]])} guideOpen={guideOpen} onGuide={() => { setGuideOpen((o) => !o); if (!settings.guideDone) store.setSetting('guideDone', true); }} />
+      <TopBar onAction={(a) => void onAction(a)} onPlace={(p) => { setSearchMark(p); focusOn([[p.lat, p.lon]]); }} guideOpen={guideOpen} onGuide={() => { setGuideOpen((o) => !o); if (!settings.guideDone) store.setSetting('guideDone', true); }} />
       <div className="main">
         <Sidebar
           tab={tab} setTab={setTab} selection={sel} select={(s) => { setSel(s); if (s?.kind === 'site') { const x = sites.find((y) => y.id === s.id); if (x) focusOn([[x.lat, x.lon]]); } if (s?.kind === 'link') { const l = links.find((y) => y.id === s.id); const a = sites.find((y) => y.id === l?.siteA), b = sites.find((y) => y.id === l?.siteB); if (a && b) focusOn([[a.lat, a.lon], [b.lat, b.lon]]); } }}
@@ -326,6 +327,7 @@ export function App() {
           onRenameProject={() => project && setDialog({ title: 'Переименовать проект', input: { label: 'Название проекта', value: project.name }, confirm: 'Сохранить', onConfirm: (v) => { void store.updateProject({ ...project, name: v! }); } })}
           onCleanupProjects={() => setModal({ kind: 'cleanup' })}
           onDeleteSite={async (id) => { const st = sites.find((x) => x.id === id); try { await store.deleteSite(id); if (sel?.kind === 'site' && sel.id === id) setSel(null); notify(`Объект «${st?.name ?? ''}» удалён.`); } catch (e) { fail(e); } }}
+          onDeleteLink={async (id) => { const l = links.find((x) => x.id === id); const nm = l ? `${sites.find((s) => s.id === l.siteA)?.name ?? ''} — ${sites.find((s) => s.id === l.siteB)?.name ?? ''}` : ''; try { await store.deleteLink(id); if (sel?.kind === 'link' && sel.id === id) setSel(null); notify(`Пролёт «${nm}» удалён.`); } catch (e) { fail(e); } }}
           onDeleteProjectById={async (id) => { const pr = store.projects.find((x) => x.id === id); try { await store.deleteProject(id); if (id === project?.id) setSel(null); notify(`Проект «${pr?.name ?? ''}» удалён.`); } catch (e) { fail(e); } }}
           onDeleteProject={() => project && confirmDelete('Удалить проект?', `Проект «${project.name}» удалится вместе со всеми объектами (${sites.length}) и пролётами (${links.length}). Перед удалением можно сохранить его через «Файл» → «Экспорт проекта».`, async () => { await store.deleteProject(project.id); notify('Проект удалён.'); })}
           onAddRadio={() => { const r = { id: uid(), name: 'Новое ППУ', band: '', modes: [], notes: '' }; store.saveLibrary({ ...library, radios: [...library.radios, r] }); setSel({ kind: 'radio', id: r.id }); }}
@@ -340,6 +342,9 @@ export function App() {
             onStartMove={startMove} onMoveDraft={(la, lo) => setMoving((m) => (m ? { ...m, lat: la, lon: lo } : m))}
             onLinkClick={(id) => { setTab('links'); setSel({ kind: 'link', id }); }}
             onView={(center, zoom) => store.setSetting('mapView', { center, zoom })}
+            searchMark={searchMark}
+            onSearchMarkClear={() => setSearchMark(null)}
+            onSearchMarkCreate={() => { if (!searchMark) return; if (!project) { notify('Сначала создайте проект: кнопка рядом с полем «Проект».', true); return; } setModal({ kind: 'add-site', lat: searchMark.lat, lon: searchMark.lon }); }}
           />
           <div className="map-toolbar">
             {moving ? (() => {
@@ -383,7 +388,7 @@ export function App() {
         <AddSiteDialog
           initial={modal.lat != null && modal.lon != null ? { lat: modal.lat, lon: modal.lon } : undefined}
           onClose={() => setModal(null)}
-          onCreate={(d) => { void store.addSite({ ...d, notes: '' }).then((s) => { setModal(null); setTab('sites'); setSel({ kind: 'site', id: s.id }); focusOn([[s.lat, s.lon]]); }).catch(fail); }}
+          onCreate={(d) => { void store.addSite({ ...d, notes: '' }).then((s) => { setModal(null); setSearchMark(null); setTab('sites'); setSel({ kind: 'site', id: s.id }); focusOn([[s.lat, s.lon]]); }).catch(fail); }}
         />
       ) : null}
       {modal?.kind === 'new-link' ? (

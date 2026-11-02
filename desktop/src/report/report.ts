@@ -1,7 +1,7 @@
 /** PDF reports: one link, or a whole project (summary page + one section per link). */
 import { PdfDoc } from './pdf/writer';
 import type { Link, Project } from '../data/types';
-import { protectionRows } from '../data/calc/protectionText';
+import { interferenceRows, protectionRows } from '../data/calc/protectionText';
 import { SCHEME_NAMES } from '../data/calc/protection';
 import { geometry, surfaceRuns, type Level, type LinkResult } from '../data/calc/link';
 import { downtime, fmt, ghz, pct, polLong, polName, stripMarks } from '../data/calc/format';
@@ -249,8 +249,8 @@ function linkSection(L: Layout, it: ReportItem, project: Project | null, date: s
     row(['Коэффициент усиления антенны A, дБ', ...r.channels.map((c) => fmt(c.gA, 1) + (c.ch.gainA == null ? ' (расчётный)' : ''))]),
     row(['Коэффициент усиления антенны B, дБ', ...r.channels.map((c) => fmt(c.gB, 1) + (c.ch.gainB == null ? ' (расчётный)' : ''))]),
     row(['Ширина луча A / B', ...r.channels.map((c) => `${fmt(c.beamA, 1)}° / ${fmt(c.beamB, 1)}°`)]),
-    row(['Потери на объединение, дБ (каждый конец)', ...r.channels.map((c) => fmt(c.ch.combinerLossDb, 1))]),
-    row(['Прочие потери на пролёте, дБ', ...r.channels.map(() => fmt(link.otherLoss, 1))])
+    row(['Прочие потери на пролёте, дБ', ...r.channels.map(() => fmt(link.otherLoss, 1))]),
+    row(['Корректировка порогов (из паспорта), дБ', ...r.channels.map((c) => fmt(c.ch.thrCorrDb ?? 0, 1))])
   ]);
 
   profileChart(L, r);
@@ -324,6 +324,7 @@ function linkSection(L: Layout, it: ReportItem, project: Project | null, date: s
     }
     if (c.ref) steps.push(row([`Сигнал на приёмнике, ${c.ref.name}`, { t: `мощность ${fmt(c.ref.txDbm, 1)} дБм + антенны − потери`, color: C.muted }, { t: fmt(c.ref.prx, 1) + ' дБм', bold: true }]));
     protectionRows(r, c).forEach((x) => steps.push(row([x.t, { t: x.s, color: C.muted }, { t: x.v, bold: true }])));
+    interferenceRows(r, c).forEach((x) => steps.push(row([x.t, { t: x.s, color: C.muted }, { t: x.v, bold: true }])));
     steps.push(row(['Запас, нужный для нормы', { t: 'чтобы перерывов было не больше допустимого', color: C.muted }, { t: fmt(c.marginRequired, 1) + ' дБ', bold: true }]));
     steps.push(row(['Дождь: ослабление в ливень', { t: `${fmt(r.climate.rainR001, 0)} мм/ч, ${fmt(c.rain.gamma, 3)} дБ/км`, color: C.muted }, { t: fmt(c.rain.A001, 1) + ' дБ', bold: true }]));
   });

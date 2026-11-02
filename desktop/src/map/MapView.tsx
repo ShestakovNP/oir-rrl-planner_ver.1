@@ -44,6 +44,10 @@ interface Props {
   onMoveDraft(lat: number, lon: number): void;
   onLinkClick(id: string): void;
   onView(center: [number, number], zoom: number): void;
+  /** Place found by the search box: a marker with «create an object here». */
+  searchMark: { lat: number; lon: number; name: string; detail: string } | null;
+  onSearchMarkCreate(): void;
+  onSearchMarkClear(): void;
   initialView: { center: [number, number]; zoom: number };
 }
 
@@ -250,6 +254,32 @@ export function MapView(p: Props) {
     const off = subscribeHover(draw);
     return () => { off(); if (mk) mk.remove(); };
   }, []);
+
+  /* marker for the place found by the search box */
+  const markLayer = useRef<L.Marker | null>(null);
+  useEffect(() => {
+    const m = map.current;
+    if (!m) return;
+    if (markLayer.current) { markLayer.current.remove(); markLayer.current = null; }
+    const sm = p.searchMark;
+    if (!sm) return;
+    const icon = L.divIcon({ className: 'search-icon', html: '<div class="search-pin"></div>', iconSize: [26, 34], iconAnchor: [13, 32] });
+    const mk = L.marker([sm.lat, sm.lon], { icon, keyboard: false, zIndexOffset: 2000 });
+    const box = document.createElement('div');
+    box.className = 'site-pop-body';
+    box.innerHTML = `<b>${esc(sm.name)}</b><span class="coords">${sm.lat.toFixed(6)}, ${sm.lon.toFixed(6)}</span>${sm.detail && sm.detail !== `${sm.lat.toFixed(5)}, ${sm.lon.toFixed(5)}` ? `<span class="code">${esc(sm.detail)}</span>` : ''}`;
+    const add = document.createElement('button');
+    add.type = 'button'; add.className = 'btn sm primary'; add.textContent = 'Создать объект здесь';
+    add.addEventListener('click', (e) => { e.stopPropagation(); cb.current.onSearchMarkCreate(); });
+    const del = document.createElement('button');
+    del.type = 'button'; del.className = 'btn sm'; del.textContent = 'Убрать метку';
+    del.addEventListener('click', (e) => { e.stopPropagation(); cb.current.onSearchMarkClear(); });
+    box.appendChild(add); box.appendChild(del);
+    mk.bindPopup(box, { closeButton: false, autoPan: true, offset: [0, -26], className: 'site-pop' });
+    mk.addTo(m);
+    mk.openPopup();
+    markLayer.current = mk;
+  }, [p.searchMark]);
 
   /* focus requests */
   useEffect(() => {

@@ -138,7 +138,7 @@ export function StoreProvider({ children, fallback }: { children: ReactNode; fal
       await r.saveLibrary(lib);
     }
     const st = { ...DEFAULT_SETTINGS, ...((await r.getSetting<Settings>('settings')) ?? {}) };
-    if (resetNote) { st.lastProjectId = null; st.favoriteProjects = []; await r.setSetting('settings', st); }
+    if (resetNote) { st.lastProjectId = null; st.favoriteProjects = []; st.guideDone = false; await r.setSetting('settings', st); }
     setBootNotice(resetNote);
     setSettings(st);
     setLibrary(lib ?? { radios: [], antennas: [] });
@@ -168,10 +168,12 @@ export function StoreProvider({ children, fallback }: { children: ReactNode; fal
   const results = useMemo(() => {
     const m = new Map<string, LinkResult>();
     const byId = new Map(sites.map((s) => [s.id, s]));
+    // Other links of the project: interference between links that share an object.
+    const neighbors = links.flatMap((l) => { const a = byId.get(l.siteA), b = byId.get(l.siteB); return a && b ? [{ link: l, A: a, B: b }] : []; });
     links.forEach((l) => {
       const a = byId.get(l.siteA), b = byId.get(l.siteB);
       if (a && b) {
-        try { m.set(l.id, calculateLink(l, a, b)); } catch (e) { console.error('calc failed', l.id, e); }
+        try { m.set(l.id, calculateLink(l, a, b, neighbors)); } catch (e) { console.error('calc failed', l.id, e); }
       }
     });
     return m;

@@ -37,7 +37,7 @@ export function LinkPanel({ link, result, onClose, onDelete, onReport, onFocus, 
   useEffect(() => { window.dispatchEvent(new CustomEvent('oir:link-tab', { detail: tab })); }, [tab, link.id]);
   const A = sites.find((s) => s.id === link.siteA), B = sites.find((s) => s.id === link.siteB);
   const set = (patch: Partial<Link>) => updateLink({ ...link, ...patch });
-  const tabs: [Tab, string][] = [['input', 'Исходные данные'], ['profile', 'Профиль'], ['detail', 'Подробно'], ['result', 'Итог']];
+  const tabs: [Tab, string][] = [['input', 'Исходные данные'], ['profile', 'Профиль'], ['detail', 'Итог'], ['result', 'Подробно']];
 
   return (
     <aside className="panel wide" aria-label="Пролёт">
@@ -129,7 +129,7 @@ function ProtectionEditor({ link, set, nameA, nameB }: { link: Link; set(p: Part
             ))}
           </div>
           {!p.sdA && !p.sdB ? <div className="notice">Отметьте хотя бы один объект со второй антенной.</div> : null}
-          <p className="hint">Обычно разнос по высоте 10–15 м (не меньше 150 длин волн), вторую антенну ставят ниже основной. Просвет для неё проверяется отдельно — смотрите «Подробно» и «Итог».</p>
+          <p className="hint">Обычно разнос по высоте 10–15 м (не меньше 150 длин волн), вторую антенну ставят ниже основной. Просвет для неё проверяется отдельно — смотрите «Итог» и «Подробно».</p>
         </>
       ) : null}
       {scheme === 'fd' && p ? (
@@ -168,6 +168,7 @@ function Inputs({ link, set }: { link: Link; set(p: Partial<Link>): void }) {
   const id = (s: string) => `${link.id}-${s}`;
   return (
     <>
+      <div className="auto-note" role="note"><Icon name="info" />Вводите данные — вкладки «Итог» и «Подробно» пересчитываются автоматически, сохранять ничего не нужно.</div>
       <ProtectionEditor link={link} set={set} nameA={A?.name ?? 'A'} nameB={B?.name ?? 'B'} />
       <div className="section">
         <h3>Выбор высот подвеса антенн{link.protection?.scheme === 'sd' ? <span className="hint">основные антенны; вторые — в блоке «Схема резервирования»</span> : null}</h3>
@@ -256,8 +257,9 @@ function ChannelEditor({ i, link, ch, setCh }: { i: 0 | 1; link: Link; ch: Chann
             </Field>
             <Field label="КУ антенны A, дБ" htmlFor={id('gA')} hint={`расчётный ${fmt(dishGain(link.dishA, fG), 1)} дБ`}><NumField id={id('gA')} value={ch.gainA} nullable placeholder="авто" onChange={(v) => setCh({ gainA: v })} /></Field>
             <Field label="КУ антенны B, дБ" htmlFor={id('gB')} hint={`расчётный ${fmt(dishGain(link.dishB, fG), 1)} дБ`}><NumField id={id('gB')} value={ch.gainB} nullable placeholder="авто" onChange={(v) => setCh({ gainB: v })} /></Field>
-            <Field label="Объединение, дБ" htmlFor={id('omt')} hint="ОМТ/диплексер, на конце"><NumField id={id('omt')} value={ch.combinerLossDb} min={0} onChange={(v) => setCh({ combinerLossDb: v ?? 0 })} /></Field>
+            <Field label="Корректировка порогов, дБ" htmlFor={id('thc')} hint="внесите значение из паспорта ППУ"><NumField id={id('thc')} value={ch.thrCorrDb ?? 0} min={-20} max={30} onChange={(v) => setCh({ thrCorrDb: v ?? 0 })} /></Field>
           </div>
+          <p className="hint">Корректировка порогов прибавляется ко всем порогам в таблице ниже. Требуется внести значение из паспорта ППУ (например, ухудшение порога при включённом XPIC, для другой полосы или температуры): «+» — порог хуже, «−» — лучше. 0 — пороги как в таблице.</p>
           <Field label="ППУ из справочника" htmlFor={id('radio')} hint="подставит режимы, мощность и пороги">
             <select id={id('radio')} className="select" value="" onChange={(e) => {
               const r = library.radios.find((x) => x.id === e.target.value);
@@ -371,7 +373,7 @@ function ProfileTab({ link, result, set, notify, autoLoading }: { link: Link; re
       {result ? <ProfileChart r={result} height={240} linkId={link.id} notify={notify} /> : null}
       <div className="section">
         <h3>Рельеф, здания, лес и вода с карты <span className="hint">загружаются автоматически</span></h3>
-        <p className="hint">Высоты земли — из открытой базы SRTM 30 м (OpenTopoData). Здания, лесные массивы и водоёмы (реки, озёра, водохранилища) на трассе — из OpenStreetMap (Overpass API): высота здания берётся из карты (высота или этажность), если её нет — типовая для вида здания; для леса — высота, указанная ниже. Над водой рассчитывается отражение луча от водной глади (см. «Подробно»). Загрузка идёт сама: при создании пролёта, после переноса объекта и при восстановлении сети, если раньше не получилось. Кнопки ниже — чтобы обновить вручную. Ключи не нужны; после загрузки всё хранится в программе и работает без интернета. Профиль, введённый вручную, программа не перезаписывает.</p>
+        <p className="hint">Высоты земли — из открытой базы SRTM 30 м (OpenTopoData). Здания, лесные массивы и водоёмы (реки, озёра, водохранилища) на трассе — из OpenStreetMap (Overpass API): высота здания берётся из карты (высота или этажность), если её нет — типовая для вида здания; для леса — высота, указанная ниже. Над водой рассчитывается отражение луча от водной глади (см. «Итог»). Загрузка идёт сама: при создании пролёта, после переноса объекта и при восстановлении сети, если раньше не получилось. Кнопки ниже — чтобы обновить вручную. Ключи не нужны; после загрузки всё хранится в программе и работает без интернета. Профиль, введённый вручную, программа не перезаписывает.</p>
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
           <button type="button" className="btn primary" onClick={() => void loadAll(true)} disabled={!!busy || autoLoading}><Icon name="mountain" />{link.profileSource === 'srtm' ? 'Загрузить заново' : 'Загрузить сейчас'}</button>
           <button type="button" className="btn" onClick={() => void loadAll(false)} disabled={!!busy || autoLoading || link.profile.length < 2} title="Рельеф не трогать, обновить только здания, лес и воду">Обновить только здания, лес и воду</button>

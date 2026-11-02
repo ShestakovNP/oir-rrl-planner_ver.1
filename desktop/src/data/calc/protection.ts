@@ -11,7 +11,7 @@ import type { Link, Protection, ProtectionScheme } from '../types';
 export const SCHEME_NAMES: Record<ProtectionScheme, string> = {
   '1+0': 'Без резервирования (1+0)',
   hsb: 'Горячий резерв (1+1 HSB)',
-  sd: 'Разнесённый приём (1+1 SD)',
+  sd: 'Пространственно разнесённый приём (1+1 SD)',
   fd: 'Частотное разнесение (1+1 FD)'
 };
 export const SCHEME_SHORT: Record<ProtectionScheme, string> = { '1+0': '1+0', hsb: '1+1 HSB', sd: '1+1 SD', fd: '1+1 FD' };

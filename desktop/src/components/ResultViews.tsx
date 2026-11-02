@@ -6,7 +6,7 @@ import { setHover, useHover } from '../state/hover';
 import { downtime, fmt, ghz, pct, polLong } from '../data/calc/format';
 import { n360 } from '../data/calc/geo';
 import { Icon, Rich } from './ui';
-import { protectionRows } from '../data/calc/protectionText';
+import { interferenceRows, protectionRows } from '../data/calc/protectionText';
 import { exportChart, type LegendItem } from './chartExport';
 
 export function Verdict({ r }: { r: LinkResult }) {
@@ -270,7 +270,7 @@ export function ProfileChart({ r, height = 260, linkId, notify }: { r: LinkResul
       </div>
       {refl ? (
         <p className="hint">
-          Голубой пунктир — луч, отражённый от воды на {fmt(refl.d, 2)} км{r.multi && rc ? ` (${rc.tag})` : ''}: он складывается с прямым лучом, и в зависимости от рефракции сигнал усиливается или ослабевает до {fmt(refl.worst, 1)} дБ. Подробности — в рекомендациях и на вкладке «Подробно».
+          Голубой пунктир — луч, отражённый от воды на {fmt(refl.d, 2)} км{r.multi && rc ? ` (${rc.tag})` : ''}: он складывается с прямым лучом, и в зависимости от рефракции сигнал усиливается или ослабевает до {fmt(refl.worst, 1)} дБ. Подробности — в рекомендациях и на вкладке «Итог».
         </p>
       ) : null}
       {showSecond ? shownB.map((b) => b.G2.crit ? (
@@ -343,7 +343,7 @@ export function ModesTable({ r }: { r: LinkResult }) {
                   {c.modes.map((m, i) => {
                     const l = lvl(m.ok, m.margin);
                     return (
-                      <tr key={i} title={m.deg > 0.05 ? `Соседний ствол отнимает ${fmt(m.deg, 1)} дБ` : undefined}>
+                      <tr key={i} title={m.deg > 0.05 ? `Помехи (соседний ствол, другие пролёты на объекте) отнимают ${fmt(m.deg, 1)} дБ` : undefined}>
                         <td><b>{m.name}</b></td>
                         <td className="n">{fmt(m.rateMbps, 1)}</td>
                         <td className="n">{fmt(m.prx, 1)}</td>
@@ -414,8 +414,8 @@ export function Steps({ r, link }: { r: LinkResult; link: Link }) {
         ...row('Потери в свободном пространстве', '', fmt(c.FSL, 1) + ' дБ', c.n + 'fsl'),
         ...row('Коэффициент усиления антенн A / B', c.ch.gainA == null || c.ch.gainB == null ? 'расчётный из диаметра (КИП 55 %) или по паспорту' : 'по паспорту', `${fmt(c.gA, 1)} / ${fmt(c.gB, 1)} дБ`, c.n + 'g'),
         ...row('Ширина луча A / B', '', `${fmt(c.beamA, 1)}° / ${fmt(c.beamB, 1)}°`, c.n + 'bw'),
-        ...row('Потери на объединение', 'на двух концах', fmt(2 * c.ch.combinerLossDb, 1) + ' дБ', c.n + 'omt'),
         ...row('Потери на препятствии', `в плохую погоду ${fmt(c.diffMin, 1)} дБ`, fmt(c.diff, 1) + ' дБ', c.n + 'df'),
+        ...(c.ch.thrCorrDb ? row('Корректировка порогов', 'из паспорта ППУ, ко всем режимам', (c.ch.thrCorrDb > 0 ? '+' : '') + fmt(c.ch.thrCorrDb, 1) + ' дБ', c.n + 'thc') : []),
         ...row('Затухание в газах', `${fmt(c.gasK, 3)} дБ/км`, fmt(c.gas, 2) + ' дБ', c.n + 'gas'),
         ...(c.refl ? [
           ...row('Отражение от воды', c.refl.blocked ? `точка на ${fmt(c.refl.d, 2)} км закрыта препятствием` : `на ${fmt(c.refl.d, 2)} км, угол ${fmt(c.refl.psi, 1)} мрад, |Γ| ${fmt(c.refl.gamma, 2)}, расхождение ${fmt(c.refl.divergence, 2)}, волнение ${fmt(c.refl.roughness, 2)}, антенны ${fmt(c.refl.discA + c.refl.discB, 1)} дБ → ρ ${fmt(c.refl.rho, 2)}`, c.refl.blocked ? 'нет' : c.refl.rho < 0.1 ? 'не влияет' : c.refl.loss > 0 ? `−${fmt(c.refl.loss, 1)} дБ` : `+${fmt(-c.refl.loss, 1)} дБ (не учтено)`, c.n + 'wr'),
@@ -423,6 +423,7 @@ export function Steps({ r, link }: { r: LinkResult; link: Link }) {
         ] : []),
         ...(c.ref ? row(`Сигнал на приёмнике, ${c.ref.name}`, `мощность ${fmt(c.ref.txDbm, 1)} дБм + антенны − потери${c.refl && c.refl.applied > 0 ? ' − отражение' : ''}`, fmt(c.ref.prx, 1) + ' дБм', c.n + 'p') : []),
         ...protectionRows(r, c).flatMap((x, i) => row(x.t, x.s, x.v, c.n + 'pr' + i)),
+        ...interferenceRows(r, c).flatMap((x, i) => row(x.t, x.s, x.v, c.n + 'if' + i)),
         ...row('Запас, нужный для нормы', '', fmt(c.marginRequired, 1) + ' дБ', c.n + 'mr'),
         ...row('Дождь: ослабление в ливень', `${fmt(r.climate.rainR001, 0)} мм/ч, ${fmt(c.rain.gamma, 3)} дБ/км`, fmt(c.rain.A001, 1) + ' дБ', c.n + 'rain')
       ])}

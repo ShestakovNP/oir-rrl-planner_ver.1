@@ -2,7 +2,7 @@
 import { useCallback, useState } from 'react';
 import { Brand } from '../brand/Logo';
 import { TILE_PROVIDERS } from '../config';
-import { searchPlaces, type Place } from '../net/geocode';
+import { parseLatLon, searchPlaces, type Place } from '../net/geocode';
 import { useNetState } from '../net/online';
 import { useStore, type Theme } from '../state/store';
 import { Icon, useDismiss } from './ui';
@@ -33,6 +33,9 @@ export function TopBar({ onPlace, onAction, guideOpen, onGuide }: Props) {
 
   const run = async () => {
     if (!q.trim()) return;
+    // Coordinates: straight to the map with a marker, no list to click through.
+    const c = parseLatLon(q.trim());
+    if (c) { setFound(null); setMsg(null); onPlace(c); return; }
     setBusy(true); setMsg(null); setFound(null);
     try {
       const r = await searchPlaces(q.trim());

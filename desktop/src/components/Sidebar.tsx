@@ -28,6 +28,7 @@ interface Props {
   onCleanupProjects(): void;
   onDeleteProjectById(id: string): Promise<void>;
   onDeleteSite(id: string): Promise<void>;
+  onDeleteLink(id: string): Promise<void>;
   onAddRadio(): void;
   onAddAntenna(): void;
 }
@@ -120,13 +121,26 @@ export function Sidebar(p: Props) {
           fLinks.length ? fLinks.map((l) => {
             const r = results.get(l.id);
             const ch = l.channels.filter((c, i) => i === 0 || c.enabled).map((c) => ghz(c.freqMHz)).join(' + ');
+            if (askDel === l.id)
+              return (
+                <div key={l.id} className="item-ask" role="alert">
+                  <div>Удалить пролёт «{name(l.siteA)} — {name(l.siteB)}»?<small> Объекты останутся, удалятся профиль и настройки пролёта.</small></div>
+                  <div className="item-ask-btns">
+                    <button type="button" className="btn sm danger-fill" autoFocus onClick={() => { setAskDel(null); void p.onDeleteLink(l.id); }}>Удалить</button>
+                    <button type="button" className="btn sm" onClick={() => setAskDel(null)}>Нет</button>
+                  </div>
+                </div>
+              );
             return (
-              <button key={l.id} type="button" className="item" aria-current={p.selection?.kind === 'link' && p.selection.id === l.id} onClick={() => p.select({ kind: 'link', id: l.id })}>
-                <span className={`dot ${r?.verdict.level ?? ''}`} />
-                <span className="t">{name(l.siteA)} — {name(l.siteB)}</span>
-                <span className="r">{r ? fmt(r.path.D, 2) + ' км' : ''}</span>
-                <span className="s">{ch}{r ? ` · ${r.totalRate > 0 ? fmt(r.totalRate, 1) + ' Мбит/с в норме' : r.verdict.label}` : ''}</span>
-              </button>
+              <div key={l.id} className="item-wrap">
+                <button type="button" className="item" aria-current={p.selection?.kind === 'link' && p.selection.id === l.id} onClick={() => p.select({ kind: 'link', id: l.id })}>
+                  <span className={`dot ${r?.verdict.level ?? ''}`} />
+                  <span className="t">{name(l.siteA)} — {name(l.siteB)}</span>
+                  <span className="r">{r ? fmt(r.path.D, 2) + ' км' : ''}</span>
+                  <span className="s">{ch}{r ? ` · ${r.totalRate > 0 ? fmt(r.totalRate, 1) + ' Мбит/с в норме' : r.verdict.label}` : ''}</span>
+                </button>
+                <button type="button" className="item-del" title="Удалить пролёт" aria-label={`Удалить пролёт ${name(l.siteA)} — ${name(l.siteB)}`} onClick={() => setAskDel(l.id)}><Icon name="trash" /></button>
+              </div>
             );
           }) : <div className="empty"><b>{q ? 'Ничего не найдено' : 'Пролётов пока нет'}</b>{q ? null : <span>Нажмите «Пролёт» и выберите два объекта — в списке или прямо на карте.</span>}</div>
         ) : (

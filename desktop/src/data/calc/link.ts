@@ -11,6 +11,7 @@ import { downtime, fmt, ghz, polName } from './format';
 import { buildRecommendations, type Rec } from './recommend';
 import { comparePolarization, type PolarizationResult } from './polarization';
 import { waterReflection, waterShare, type WaterReflection } from './water';
+import { coSiteInterference, type InterferenceResult, type Neighbor } from './interference';
 import { SCHEME_SHORT, diversityValidity, fdImprovement, protectionOf, sdImprovement } from './protection';
 import type { ProtectionScheme } from '../types';
 
@@ -93,6 +94,8 @@ export interface ChannelResult {
   refl: WaterReflection | null;
   /** Protection / diversity details (null = 1+0). */
   div: DiversityResult | null;
+  /** Interference from other links at the same objects on overlapping frequencies. */
+  intf: InterferenceResult | null;
 }
 
 export interface DiversityBranch {
@@ -266,10 +269,14 @@ interface Ctx {
   uNorm: number;
   /** Carrier-to-interference from the other channel, dB (Infinity = none). */
   ci: number;
+  A: Site;
+  B: Site;
+  /** Other links of the project (for interference from links at the same objects). */
+  neighbors: Neighbor[];
 }
 
 export function calcChannel(ctx: Ctx, ch: Channel, n: 1 | 2, polOverride?: Pol): ChannelResult {
-  const { link, path, k, kMin, slope, hLow, uNorm, ci } = ctx;
+  const { link, path, k, kMin, slope, hLow, uNorm, ci, A: sA, B: sB, neighbors } = ctx;
   const pol = polOverride ?? ch.pol;
   const D = path.D;
   const fGHz = ch.freqMHz / 1000;
@@ -284,10 +291,11 @@ export function calcChannel(ctx: Ctx, ch: Channel, n: 1 | 2, polOverride?: Pol):
   const gA = ch.gainA ?? gAcalc, gB = ch.gainB ?? gBcalc;
   const prot = protectionOf(link);
   const hsbLoss = prot?.scheme === 'hsb' ? 2 * Math.max(0, prot.hsbLossDb || 0) : 0;
-  const fixed = gA + gB - link.feederA - link.feederB - link.otherLoss - 2 * ch.combinerLossDb - hsbLoss;
+  const fixed = gA + gB - link.feederA - link.feederB - link.otherLoss - hsbLoss;
   const rain = rainModel(fGHz, D, link.climate.rainR001, pol);
   const c = link.climate;
   const refl = waterReflection(path, geom.s, k, kMin, fGHz, pol, link.dishA, link.dishB);
+  const intf: InterferenceResult | null = neighbors.length ? coSiteInterference(link, sA, sB, ch, pol, gA, gB, neighbors) : null;
   /* diversity: improvement of the multipath term only */
   const c0 = link.climate;
   const p0 = multipathP0(D, fGHz, c0.dN1, slope, hLow);
@@ -316,10 +324,17 @@ export function calcChannel(ctx: Ctx, ch: Channel, n: 1 | 2, polOverride?: Pol):
   };
   const mpOf = (M: number) => multipathWorstMonth(D, fGHz, c0.dN1, slope, hLow, M) / improve(M);
   const reflLoss = refl ? refl.applied : 0;
+  const thrCorr = Number.isFinite(ch.thrCorrDb) ? (ch.thrCorrDb as number) : 0;
   const modes: ModeResult[] = ch.modes
     .filter((m) => Number.isFinite(m.txDbm) && Number.isFinite(m.thresholdDbm))
+    .map((m0) => ({ ...m0, thresholdDbm: m0.thresholdDbm + thrCorr }))
     .map((m) => {
-      const degr = Number.isFinite(ci) ? 10 * Math.log10(1 + Math.pow(10, (requiredSnr(m.name) - ci) / 10)) : 0;
+      // Interference: the other stem (shared frequency) plus links at the same objects; worst end.
+      const extI = Math.max(intf?.IA ?? -Infinity, intf?.IB ?? -Infinity);
+      const prx0 = m.txDbm + fixed - FSL - diff - gas - reflLoss;
+      const iOverC = (Number.isFinite(ci) ? Math.pow(10, -ci / 10) : 0) + (Number.isFinite(extI) ? Math.pow(10, (extI - prx0) / 10) : 0);
+      const ciTot = iOverC > 0 ? -10 * Math.log10(iOverC) : Infinity;
+      const degr = Number.isFinite(ciTot) ? 10 * Math.log10(1 + Math.pow(10, (requiredSnr(m.name) - ciTot) / 10)) : 0;
       const prx = m.txDbm + fixed - FSL - diff - gas - reflLoss;
       const margin = prx - m.thresholdDbm - degr;
       const mpMonth = mpOf(margin);
@@ -344,7 +359,7 @@ export function calcChannel(ctx: Ctx, ch: Channel, n: 1 | 2, polOverride?: Pol):
   return {
     n, ch, tag: 'Ст' + n, label: `${ghz(ch.freqMHz)} · ${polName(pol)}`, fGHz, pol, geom, geomMin, FSL, diff, diffMin, gasK, gas,
     gA, gB, gAcalc, gBcalc, beamA: beamwidth(link.dishA, fGHz), beamB: beamwidth(link.dishB, fGHz), fixed, rain, modes,
-    best, working, top, next, ref: best || working[0] || modes[0] || null, marginRequired: hi, refl,
+    best, working, top, next, ref: best || working[0] || modes[0] || null, marginRequired: hi, refl, intf: intf && intf.list.length ? intf : null,
     div: prot ? (() => {
       const refM = (best || working[0] || modes[0])?.margin ?? 0;
       const fin = (b: typeof brA): DiversityBranch | null => (b ? { h: b.h, S: b.S, V: b.V, gain: b.gain, rel: b.rel, relMin: b.relMin, diff: b.diff, I: b.Ifn(refM) } : null);
@@ -357,7 +372,7 @@ export function calcChannel(ctx: Ctx, ch: Channel, n: 1 | 2, polOverride?: Pol):
   };
 }
 
-export function calculateLink(link: Link, A: Site, B: Site): LinkResult {
+export function calculateLink(link: Link, A: Site, B: Site, neighbors: Neighbor[] = []): LinkResult {
   const errors: string[] = [];
   const geoOk = [A.lat, A.lon, B.lat, B.lon].every(Number.isFinite) && Math.abs(A.lat) <= 90 && Math.abs(B.lat) <= 90;
   let geo: Geodesic | null = null;
@@ -388,7 +403,7 @@ export function calculateLink(link: Link, A: Site, B: Site): LinkResult {
   // Interference between the channels exists only when they share a frequency:
   // same polarization → full co-channel interference; orthogonal → limited by antenna XPD.
   const ci = coChannel ? (samePol ? 0 : xpd ?? Infinity) : Infinity;
-  const ctx: Ctx = { link, path, k, kMin, slope: Math.abs(path.HA - path.HB) / D, hLow: Math.min(path.HA, path.HB), uNorm, ci };
+  const ctx: Ctx = { link, path, k, kMin, slope: Math.abs(path.HA - path.HB) / D, hLow: Math.min(path.HA, path.HB), uNorm, ci, A, B, neighbors };
   const results = channels.map(({ ch, n }) => calcChannel(ctx, ch, n));
   const multi = results.length > 1;
   const totalRate = Math.round(results.reduce((s, r) => s + (r.best ? r.best.rateMbps : 0), 0) * 10) / 10;

@@ -38,6 +38,8 @@ export interface Channel {
   pol: Pol;
   /** OMT / diplexer loss at each end, dB. */
   combinerLossDb: number;
+  /** Correction added to every threshold of this stem, dB (from the radio datasheet; + = worse). */
+  thrCorrDb?: number;
   /** Antenna gain at this frequency, dBi. null = derive from the dish diameter. */
   gainA: number | null;
   gainB: number | null;

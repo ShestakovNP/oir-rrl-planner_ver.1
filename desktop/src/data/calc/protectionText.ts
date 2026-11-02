@@ -21,3 +21,14 @@ export function protectionRows(r: LinkResult, c: ChannelResult): ProtRow[] {
     rows.push({ t: 'Перерывы из-за многолучёвости', s: `без резервирования → с ним, при запасе ${c.ref ? c.ref.name : ''}`, v: `${downtime(d.mpPlain)} → ${downtime(d.mpDiv)}` });
   return rows;
 }
+
+/** Rows about interference from other links at the same objects. */
+export function interferenceRows(r: LinkResult, c: ChannelResult): ProtRow[] {
+  if (!c.intf) return [];
+  const prx = c.ref ? c.ref.prx : NaN;
+  return c.intf.list.map((x) => ({
+    t: `Помеха от пролёта «${x.name}»`,
+    s: `на «${x.at === 'A' ? r.siteA.name : r.siteB.name}», ${fmt(x.fMHz, 0)} МГц, угол ${fmt(x.theta, 1)}°, усиление антенны в эту сторону ${fmt(x.gTheta, 1)} дБи${x.samePol ? ', та же поляризация' : x.xpd > 0 ? `, развязка поляризаций ${fmt(x.xpd, 0)} дБ` : ', поляризация другая, XPD не указана'}`,
+    v: Number.isFinite(prx) ? `${fmt(x.I, 1)} дБм · C/I ${fmt(prx - x.I, 1)} дБ` : `${fmt(x.I, 1)} дБм`
+  }));
+}
