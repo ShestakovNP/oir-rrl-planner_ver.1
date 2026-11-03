@@ -3,12 +3,12 @@ import type { AntennaModel, Radio } from '../data/types';
 import { dishGain } from '../data/calc/physics';
 import { useStore } from '../state/store';
 import { Field, Icon, NumField, UnitField } from './ui';
+import { ModesEditor } from './ModesEditor';
 import { FREQ_UNITS, GAIN_UNITS, LENGTH_UNITS } from '../data/units';
 
 export function RadioPanel({ radio, onClose, onDelete }: { radio: Radio; onClose(): void; onDelete(): void }) {
   const { library, saveLibrary } = useStore();
   const set = (patch: Partial<Radio>) => saveLibrary({ ...library, radios: library.radios.map((r) => (r.id === radio.id ? { ...r, ...patch } : r)) });
-  const setMode = (k: number, patch: Partial<Radio['modes'][number]>) => set({ modes: radio.modes.map((m, j) => (j === k ? { ...m, ...patch } : m)) });
   const id = (s: string) => `${radio.id}-${s}`;
   return (
     <aside className="panel" aria-label="ППУ (приёмо-передающее устройство)">
@@ -25,25 +25,9 @@ export function RadioPanel({ radio, onClose, onDelete }: { radio: Radio; onClose
           <Field label="Диапазон" htmlFor={id('b')}><input id={id('b')} className="input" value={radio.band} onChange={(e) => set({ band: e.target.value })} placeholder="например, 18 ГГц" /></Field>
         </div>
         <div className="section">
-          <h3>Режимы модуляции <span className="hint">из паспорта</span></h3>
-          <div className="tbl-wrap">
-            <table className="tbl edit">
-              <thead><tr><th>Режим</th><th className="n">Мбит/с</th><th className="n">Мощность, дБм</th><th className="n">Порог, дБм</th><th /></tr></thead>
-              <tbody>
-                {radio.modes.map((m, k) => (
-                  <tr key={k}>
-                    <td><input id={id('mn' + k)} className="input" value={m.name} onChange={(e) => setMode(k, { name: e.target.value })} aria-label="Режим" /></td>
-                    <td><NumField id={id('mr' + k)} value={m.rateMbps} onChange={(v) => setMode(k, { rateMbps: v ?? 0 })} ariaLabel="Скорость" /></td>
-                    <td><NumField id={id('mp' + k)} value={m.txDbm} onChange={(v) => setMode(k, { txDbm: v ?? 0 })} ariaLabel="Мощность" /></td>
-                    <td><NumField id={id('mt' + k)} value={m.thresholdDbm} onChange={(v) => setMode(k, { thresholdDbm: v ?? -70 })} ariaLabel="Порог" /></td>
-                    <td><button type="button" className="x" aria-label="Удалить режим" onClick={() => set({ modes: radio.modes.filter((_, j) => j !== k) })}>×</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div><button type="button" className="btn sm" onClick={() => { const l = radio.modes[radio.modes.length - 1]; set({ modes: [...radio.modes, l ? { ...l, name: 'Новый' } : { name: 'QPSK', rateMbps: 40, txDbm: 20, thresholdDbm: -80 }] }); }}><Icon name="plus" />Режим</button></div>
-          <p className="hint">Изменения не меняют уже рассчитанные пролёты: режимы копируются в пролёт при выборе ППУ.</p>
+          <h3>Типы модуляции <span className="hint">скорость, мощность и порог — из паспорта ППУ</span></h3>
+          <ModesEditor idBase={id('m')} modes={radio.modes} onChange={(modes) => set({ modes })} />
+          <p className="hint">Изменения не меняют уже рассчитанные пролёты: типы модуляции копируются в пролёт при выборе ППУ.</p>
         </div>
         <Field label="Заметки" htmlFor={id('notes')}><textarea id={id('notes')} className="textarea" style={{ fontFamily: 'var(--f-ui)' }} rows={3} value={radio.notes} onChange={(e) => set({ notes: e.target.value })} /></Field>
       </div>

@@ -8,16 +8,18 @@ import { useStore, type Theme } from '../state/store';
 import { Icon, useDismiss } from './ui';
 
 export type FileAction =
-  | 'export-project' | 'import' | 'export-csv' | 'import-csv' | 'report-project' | 'backup' | 'about' | 'clear-tiles';
+  | 'export-project' | 'import' | 'export-csv' | 'import-csv' | 'report-project' | 'backup' | 'about' | 'clear-tiles' | 'update';
 
 interface Props {
   onPlace(p: Place): void;
   onAction(a: FileAction): void;
   guideOpen: boolean;
   onGuide(): void;
+  /** Build number of a newer release found on GitHub (null = none found). */
+  updateAvailable?: number | null;
 }
 
-export function TopBar({ onPlace, onAction, guideOpen, onGuide }: Props) {
+export function TopBar({ onPlace, onAction, guideOpen, onGuide, updateAvailable }: Props) {
   const { settings, setSetting, project } = useStore();
   const net = useNetState();
   const [q, setQ] = useState('');
@@ -92,7 +94,8 @@ export function TopBar({ onPlace, onAction, guideOpen, onGuide }: Props) {
           </div>
         ) : null}
       </div>
-      <button type="button" className={`btn ghost help-btn ${guideOpen ? 'on' : ''} ${!settings.guideDone ? 'fresh' : ''} ${guideOpen ? '' : 'has-tip'}`} data-tip="Первые шаги: как начать работу" aria-label="Первые шаги — гид по программе" aria-pressed={guideOpen} onClick={onGuide}>?</button>
+      {updateAvailable ? <button type="button" className="btn sm primary" data-tip={`Доступна сборка №${updateAvailable}`} onClick={() => onAction('update')}><Icon name="refresh" />Обновить</button> : null}
+      <button type="button" className={`btn ghost help-btn ${guideOpen ? 'on' : ''} ${!settings.guideDone ? 'fresh' : ''} ${guideOpen ? '' : 'has-tip'}`} data-tip={guideOpen ? undefined : "Первые шаги: как начать работу"} aria-label="Первые шаги — гид по программе" aria-pressed={guideOpen} onClick={onGuide}>?</button>
       <div className="menu-wrap" ref={viewRef}>
         <button type="button" className="btn ghost" aria-label="Настройки" aria-expanded={menu === 'view'} onClick={() => setMenu(menu === 'view' ? null : 'view')}><Icon name="moon" /></button>
         {menu === 'view' ? (
@@ -104,6 +107,7 @@ export function TopBar({ onPlace, onAction, guideOpen, onGuide }: Props) {
               </button>
             ))}
             <hr />
+            <button role="menuitem" type="button" onClick={() => act('update')}><Icon name="refresh" />Обновить приложение</button>
             <button role="menuitem" type="button" onClick={() => act('clear-tiles')}>Очистить кэш карты</button>
             <button role="menuitem" type="button" onClick={() => act('about')}><Icon name="info" />О программе и данных</button>
           </div>

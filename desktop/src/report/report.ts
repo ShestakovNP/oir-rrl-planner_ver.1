@@ -274,7 +274,7 @@ function linkSection(L: Layout, it: ReportItem, project: Project | null, date: s
   r.channels.forEach((c) => {
     if (r.multi) L.h3(`Ствол ${c.n} · ${c.label}`);
     L.table(
-      [{ t: 'Режим', w: 14 }, { t: 'Мбит/с', w: 10, align: 'right' }, { t: 'Мощность, дБм', w: 12, align: 'right' }, { t: 'Порог, дБм', w: 11, align: 'right' }, { t: 'Сигнал, дБм', w: 11, align: 'right' }, { t: 'Запас, дБ', w: 10, align: 'right' }, { t: 'Перерывы в год', w: 13, align: 'right' }, { t: 'Доступность', w: 13, align: 'right' }, { t: 'Итог', w: 12 }],
+      [{ t: 'Модуляция', w: 14 }, { t: 'Мбит/с', w: 10, align: 'right' }, { t: 'Мощность, дБм', w: 12, align: 'right' }, { t: 'Порог, дБм', w: 11, align: 'right' }, { t: 'Сигнал, дБм', w: 11, align: 'right' }, { t: 'Запас, дБ', w: 10, align: 'right' }, { t: 'Перерывы в год', w: 13, align: 'right' }, { t: 'Доступность', w: 13, align: 'right' }, { t: 'Итог', w: 12 }],
       c.modes.map((m) => {
         const lv: Level = m.margin <= 0 ? 'bad' : m.ok ? 'ok' : 'warn';
         return row([{ t: m.name, bold: true }, fmt(m.rateMbps, 1), fmt(m.txDbm, 1), fmt(m.thresholdDbm, 1), fmt(m.prx, 1), fmt(m.margin, 1), m.margin > 0 ? downtime(m.u) : 'всегда', m.margin > 0 ? fmt(100 - m.u, 4) + ' %' : '—', { t: lv === 'ok' ? 'В норме' : lv === 'warn' ? 'Ниже нормы' : 'Нет связи', bold: true, color: SEM[lv], fill: SEMS[lv] }]);

@@ -18,11 +18,8 @@ export const MODES_EBAND: ModMode[] = [{ name: '256QAM', rateMbps: 1791, txDbm: 
 
 export function defaultLibrary(): Library {
   return {
-    radios: [
-      { id: uid(), name: 'Шаблон 6 ГГц, 28 МГц', band: '6 ГГц', modes: MODES_6G.map((m) => ({ ...m })), notes: 'Режимы из отчёта DRRL «Скумбрия — Скумбрия-2». Замените значениями из паспорта своего ППУ.' },
-      { id: uid(), name: 'Шаблон 8 ГГц, 28 МГц', band: '8 ГГц', modes: MODES_8G.map((m) => ({ ...m })), notes: 'Типовые значения для примера. Замените значениями из паспорта.' },
-      { id: uid(), name: 'E-band 80 ГГц, 250 МГц (оценка)', band: '80 ГГц', modes: MODES_EBAND.map((m) => ({ ...m })), notes: 'Мощность и порог восстановлены по уровню приёма и запасу из расчёта DRRL (Huawei RTN 380). Сверьте с паспортом.' }
-    ],
+    // Radios start empty: each engineer adds their own from the datasheet (or saves them from an imported project).
+    radios: [],
     antennas: [0.3, 0.6, 1.0, 1.2, 1.8].map((d) => ({ id: uid(), name: `Параболическая ${String(d).replace('.', ',')} м`, diameterM: d, xpdDb: null, gains: [], notes: 'Шаблон. Внесите коэффициент усиления из паспорта; пока таблица пустая, КУ рассчитывается из диаметра.' }))
   };
 }

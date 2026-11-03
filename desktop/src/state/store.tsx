@@ -132,6 +132,15 @@ export function StoreProvider({ children, fallback }: { children: ReactNode; fal
         await r.setSetting('buildId', BUILD_ID);
       }
     }
+    // The radio library starts empty now: drop the templates earlier versions put there.
+    if (!(await r.getSetting<boolean>('migration:empty-radios'))) {
+      const TEMPLATES = ['Шаблон 6 ГГц, 28 МГц', 'Шаблон 8 ГГц, 28 МГц', 'E-band 80 ГГц, 250 МГц (оценка)'];
+      if (lib && lib.radios.some((x) => TEMPLATES.includes(x.name))) {
+        lib = { ...lib, radios: lib.radios.filter((x) => !TEMPLATES.includes(x.name)) };
+        await r.saveLibrary(lib);
+      }
+      await r.setSetting('migration:empty-radios', true);
+    }
     // Older versions named a fresh entry «Новая радиостанция»; the library now calls them ППУ.
     if (lib && lib.radios.some((x) => /^Новая радиостанция$/i.test(x.name.trim()))) {
       lib = { ...lib, radios: lib.radios.map((x) => (/^Новая радиостанция$/i.test(x.name.trim()) ? { ...x, name: 'Новое ППУ' } : x)) };

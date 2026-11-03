@@ -79,12 +79,11 @@ h1, h2, h3, h4 { margin: 0; text-wrap: balance; }
 .btn:disabled { opacity: 0.55; cursor: default; pointer-events: none; }
 .btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 .has-tip { position: relative; }
-.has-tip::after { content: attr(data-tip); position: absolute; top: calc(100% + 8px); right: 0; background: var(--ink); color: var(--panel); font-size: 12px; font-weight: 600; padding: 6px 10px; border-radius: 6px; white-space: nowrap; box-shadow: var(--shadow); opacity: 0; transform: translateY(-3px); transition: opacity .12s, transform .12s; pointer-events: none; z-index: 1400; }
-.has-tip::before { content: ""; position: absolute; top: calc(100% + 3px); right: 10px; border: 5px solid transparent; border-bottom-color: var(--ink); border-top: 0; opacity: 0; transition: opacity .12s; pointer-events: none; z-index: 1400; }
-/* A hovered button can get its own stacking context (filter on .btn.primary:hover), so lift the whole button. */
-.has-tip:hover, .has-tip:focus-visible { z-index: 1400; }
-.has-tip:hover::after, .has-tip:focus-visible::after { opacity: 1; transform: none; }
-.has-tip:hover::before, .has-tip:focus-visible::before { opacity: 1; }
+/* Tooltip layer (components/Tooltip.tsx): fixed, always inside the window. */
+.tip-layer { position: fixed; z-index: 3000; max-width: min(320px, calc(100vw - 16px)); background: var(--ink); color: var(--panel); font-size: 12px; font-weight: 600; line-height: 1.35; padding: 6px 10px; border-radius: 6px; box-shadow: var(--shadow); pointer-events: none; opacity: 0; transition: opacity .12s; white-space: normal; }
+.tip-layer.on { opacity: 1; }
+.tip-layer::before { content: ""; position: absolute; left: calc(var(--arrow) - 5px); top: -5px; border: 5px solid transparent; border-bottom-color: var(--ink); border-top: 0; }
+.tip-layer.above::before { top: auto; bottom: -5px; border-bottom: 0; border-top: 5px solid var(--ink); }
 .icon { width: 16px; height: 16px; flex: none; }
 .input, .select, .textarea { height: 30px; border: 1px solid var(--line); background: var(--sunk); border-radius: 6px; padding: 0 9px; width: 100%; min-width: 0; }
 .textarea { height: auto; padding: 8px 9px; font-family: var(--f-mono); font-size: 12.5px; line-height: 1.5; resize: vertical; }
@@ -445,3 +444,10 @@ table.tbl { border-collapse: collapse; width: 100%; font-size: 12.5px; }
 .import-note { margin: 8px 0; padding: 8px 10px; border-left: 3px solid var(--accent); background: var(--sunk); border-radius: 4px; white-space: pre-wrap; }
 .import-note span { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
 .dialog p.hint { margin-top: 8px; }
+
+.apply-bar { position: sticky; bottom: -1px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 0 14px; margin-top: 6px; background: var(--panel); border-top: 1px solid var(--line-2); z-index: 5; }
+.apply-btn { height: 36px; padding: 0 22px; font-size: 14px; }
+.draft-note { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+.tip-wrap { display: block; }
+.warn-text { color: var(--warn, #b26a00); }
+.tbl.edit td:first-child .select { min-width: 108px; }

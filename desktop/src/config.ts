@@ -9,6 +9,14 @@ export const APP_VERSION = '1.0.0';
 declare const __BUILD_ID__: string;
 /** Unique id of this build (set by vite.config.ts). */
 export const BUILD_ID: string = typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : 'dev';
+declare const __BUILD_NUM__: string;
+/** Sequential build number (GitHub Actions run number); 0 for a local build. */
+export const BUILD_NUMBER: number = typeof __BUILD_NUM__ === 'string' ? Number(__BUILD_NUM__) || 0 : 0;
+/**
+ * Public GitHub repository whose Releases carry the installers. «Обновить приложение» asks the
+ * public GitHub API for the latest release; nothing else is sent and no account is needed.
+ */
+export const UPDATE_REPO = 'ShestakovNP/oir-rrl-planner_ver.1';
 /**
  * Test phase: every new build starts with an empty project list. Projects of the previous build
  * are saved to a backup JSON next to the database first. The equipment library is kept.

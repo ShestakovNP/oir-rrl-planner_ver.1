@@ -12,6 +12,7 @@ const P: Record<string, string> = {
   close: 'M4 4l8 8M12 4l-8 8',
   trash: 'M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4',
   download: 'M8 2v8M4.5 6.5 8 10l3.5-3.5M2.5 13.5h11',
+  refresh: 'M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3',
   upload: 'M8 11V3M4.5 6.5 8 3l3.5 3.5M2.5 13.5h11',
   target: 'M8 14A6 6 0 1 0 8 2a6 6 0 0 0 0 12zM8 0v3M8 13v3M0 8h3M13 8h3',
   radio: 'M3 6h10v8H3zM5.5 6 11 1.5M5.5 9.5h1M9 9.5h1.5',

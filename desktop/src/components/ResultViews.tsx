@@ -339,7 +339,7 @@ export function ModesTable({ r }: { r: LinkResult }) {
           {c.modes.length ? (
             <div className="tbl-wrap">
               <table className="tbl">
-                <thead><tr><th>Режим</th><th className="n">Мбит/с</th><th className="n">Сигнал, дБм</th><th className="n">Запас, дБ</th><th className="n">Перерывы/год</th><th>Итог</th></tr></thead>
+                <thead><tr><th>Тип модуляции</th><th className="n">Мбит/с</th><th className="n">Сигнал, дБм</th><th className="n">Запас, дБ</th><th className="n">Перерывы/год</th><th>Итог</th></tr></thead>
                 <tbody>
                   {c.modes.map((m, i) => {
                     const l = lvl(m.ok, m.margin);

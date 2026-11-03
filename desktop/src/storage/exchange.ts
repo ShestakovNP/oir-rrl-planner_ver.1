@@ -65,6 +65,13 @@ export async function findExisting(repo: Repo, b: Bundle): Promise<Project | nul
   return (await repo.listProjects()).find((p) => p.id === b.projects[0].id) ?? null;
 }
 
+/** Radios and antennas of the file that the local library does not have yet (by name). */
+export async function newLibraryItems(repo: Repo, b: Bundle): Promise<{ radios: number; antennas: number }> {
+  const lib = (await repo.getLibrary()) ?? { radios: [], antennas: [] };
+  const rn = new Set(lib.radios.map((r) => r.name)), an = new Set(lib.antennas.map((a) => a.name));
+  return { radios: (b.library?.radios ?? []).filter((r) => !rn.has(r.name)).length, antennas: (b.library?.antennas ?? []).filter((a) => !an.has(a.name)).length };
+}
+
 async function mergeLibrary(repo: Repo, b: Bundle) {
   if (!b.library) return;
   const lib = (await repo.getLibrary()) ?? { radios: [], antennas: [] };
@@ -81,9 +88,10 @@ export interface ImportResult { projects: number; sites: number; links: number; 
  *  - 'copy': new records. A project that is not here yet keeps its ids, so when a colleague
  *    sends it back it is recognised; a project that already exists gets fresh ids («(импорт)»).
  *  - 'replace': the project with the same id is replaced by the file version (objects and links too).
- * Library items with names not yet present are added.
+ * With `addLibrary`, radios and antennas with names not yet present are added to the library
+ * (the links keep their own copy of the modulation table either way).
  */
-export async function importBundle(repo: Repo, raw: unknown, mode: 'copy' | 'replace' = 'copy'): Promise<ImportResult> {
+export async function importBundle(repo: Repo, raw: unknown, mode: 'copy' | 'replace' = 'copy', addLibrary = true): Promise<ImportResult> {
   const b = parseBundle(raw);
   const pMap = new Map<string, string>(), sMap = new Map<string, string>();
   const have = await repo.listProjects();
@@ -118,7 +126,7 @@ export async function importBundle(repo: Repo, raw: unknown, mode: 'copy' | 'rep
     await repo.saveLink(normalizeLink({ ...l, id: keep.has(l.projectId) ? l.id : uid(), projectId, siteA: a, siteB: bb }));
     links++;
   }
-  await mergeLibrary(repo, b);
+  if (addLibrary) await mergeLibrary(repo, b);
   return { projects: b.projects.length, sites, links, projectId: b.projects.length ? pMap.get(b.projects[0].id) ?? null : null };
 }
 

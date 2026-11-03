@@ -444,7 +444,8 @@ export function calcChannel(ctx: Ctx, ch: Channel, n: 1 | 2, polOverride?: Pol):
   const sesrNorm = gp && gp.sesrNormPct != null && gp.sesrNormPct > 0 ? gp.sesrNormPct : null;
   const thrCorr = Number.isFinite(ch.thrCorrDb) ? (ch.thrCorrDb as number) : 0;
   const modes: ModeResult[] = ch.modes
-    .filter((m) => Number.isFinite(m.txDbm) && Number.isFinite(m.thresholdDbm))
+    // Rows not filled in from the datasheet yet (rate 0 or threshold 0 dBm) are left out.
+    .filter((m) => Number.isFinite(m.txDbm) && Number.isFinite(m.thresholdDbm) && m.rateMbps > 0 && m.thresholdDbm < 0)
     .map((m0) => ({ ...m0, thresholdDbm: m0.thresholdDbm + thrCorr }))
     .map((m) => {
       // Interference: the other stem (shared frequency) plus links at the same objects; worst end.
@@ -569,7 +570,7 @@ export function calculateLink(link: Link, A: Site, B: Site, neighbors: Neighbor[
       sub = 'Поднимите антенны, возьмите антенны больше или режим с более низким порогом.';
     } else {
       title = 'Сигнала не хватает: приёмник не услышит передатчик';
-      sub = r.modes.length ? 'Уровень сигнала ниже порога во всех режимах. Нужны антенны больше, выше мощность или короче пролёт.' : 'Добавьте режимы модуляции ППУ.';
+      sub = r.modes.length ? 'Уровень сигнала ниже порога во всех режимах. Нужны антенны больше, выше мощность или короче пролёт.' : 'Добавьте типы модуляции ППУ и внесите скорость, мощность и порог из паспорта.';
     }
   } else {
     title = allOk ? `Пролёт ${nm} рабочий. Два ствола дают ${fmt(totalRate, 1)} Мбит/с в пределах нормы`

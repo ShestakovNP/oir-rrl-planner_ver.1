@@ -10,6 +10,8 @@ import { useStore } from '../state/store';
 import { fetchTerrainProfile } from '../net/elevation';
 import { applyClutter, fetchClutterObjects } from '../net/clutter';
 import { Field, Icon, NumField, parseNum } from './ui';
+import { ModesEditor, incomplete } from './ModesEditor';
+import { uid } from '../data/ids';
 import { Azimuths, ModesTable, PolarizationView, ProfileChart, Recommendations, Steps, Verdict } from './ResultViews';
 
 type Tab = 'result' | 'input' | 'profile' | 'detail';
@@ -28,6 +30,12 @@ interface Props {
   initialTab?: 'input' | 'result';
 }
 
+/**
+ * Inputs typed but not applied yet, per link. Kept outside the component so that closing the
+ * panel or opening another link does not lose them; «Применить» writes them and recalculates.
+ */
+const drafts = new Map<string, Partial<Link>>();
+
 export function LinkPanel({ link, result, onClose, onDelete, onReport, onFocus, notify, loading, initialTab = 'result' }: Props) {
   const { sites, updateLink } = useStore();
   const [tab, setTab] = useState<Tab>(initialTab);
@@ -38,6 +46,19 @@ export function LinkPanel({ link, result, onClose, onDelete, onReport, onFocus, 
   useEffect(() => { window.dispatchEvent(new CustomEvent('oir:link-tab', { detail: tab })); }, [tab, link.id]);
   const A = sites.find((s) => s.id === link.siteA), B = sites.find((s) => s.id === link.siteB);
   const set = (patch: Partial<Link>) => updateLink({ ...link, ...patch });
+  const [draft, setDraftState] = useState<Partial<Link>>(() => drafts.get(link.id) ?? {});
+  useEffect(() => { setDraftState(drafts.get(link.id) ?? {}); }, [link.id]);
+  const dirty = Object.keys(draft).length > 0;
+  const edited: Link = { ...link, ...draft };
+  const setDraft = (patch: Partial<Link>) => setDraftState((d) => { const n = { ...d, ...patch }; drafts.set(link.id, n); return n; });
+  const apply = () => {
+    if (dirty) updateLink({ ...link, ...draft });
+    drafts.delete(link.id);
+    setDraftState({});
+    setTab('result');
+    notify(dirty ? 'Исходные данные применены, пролёт пересчитан.' : 'Изменений нет — показан текущий расчёт.');
+  };
+  const discard = () => { drafts.delete(link.id); setDraftState({}); };
   const tabs: [Tab, string][] = [['input', 'Исходные данные'], ['profile', 'Профиль'], ['detail', 'Итог'], ['result', 'Подробно']];
 
   return (
@@ -68,7 +89,8 @@ export function LinkPanel({ link, result, onClose, onDelete, onReport, onFocus, 
             <div className="section"><h3>Направление антенн <span className="hint">азимут от севера по часовой стрелке</span></h3><Azimuths r={result} decl={link.declination} /></div>
           </>
         ) : null}
-        {tab === 'input' ? <Inputs link={link} set={set} /> : null}
+        {dirty && tab !== 'input' ? <div className="notice draft-note">Во вкладке «Исходные данные» есть непримененные изменения — расчёт показан без них. <button type="button" className="btn sm primary" onClick={apply}>Применить</button></div> : null}
+        {tab === 'input' ? <Inputs link={edited} set={setDraft} dirty={dirty} onApply={apply} onDiscard={discard} /> : null}
         {tab === 'profile' && A && B ? <ProfileTab link={link} result={result} set={set} notify={notify} autoLoading={!!loading} /> : null}
         {result && tab === 'detail' ? (
           <>
@@ -144,7 +166,7 @@ function ProtectionEditor({ link, set, nameA, nameB }: { link: Link; set(p: Part
 
 /* ---------------- inputs ---------------- */
 
-function Inputs({ link, set }: { link: Link; set(p: Partial<Link>): void }) {
+function Inputs({ link, set, dirty, onApply, onDiscard }: { link: Link; set(p: Partial<Link>): void; dirty: boolean; onApply(): void; onDiscard(): void }) {
   const { sites, library } = useStore();
   const A = sites.find((s) => s.id === link.siteA), B = sites.find((s) => s.id === link.siteB);
   const setCh = (i: 0 | 1, patch: Partial<Channel>) => {
@@ -169,7 +191,8 @@ function Inputs({ link, set }: { link: Link; set(p: Partial<Link>): void }) {
   const id = (s: string) => `${link.id}-${s}`;
   return (
     <>
-      <div className="auto-note" role="note"><Icon name="info" />Вводите данные — вкладки «Итог» и «Подробно» пересчитываются автоматически, сохранять ничего не нужно.</div>
+      <div className="auto-note" role="note"><Icon name="info" />Заполните исходные данные и нажмите «Применить» внизу — пролёт будет рассчитан, результат откроется во вкладке «Подробно».</div>
+      {dirty ? <div className="notice draft-note">Есть непримененные изменения. <button type="button" className="btn sm primary" onClick={onApply}>Применить</button></div> : null}
       <ProtectionEditor link={link} set={set} nameA={A?.name ?? 'A'} nameB={B?.name ?? 'B'} />
       <div className="section">
         <h3>Выбор высот подвеса антенн{link.protection?.scheme === 'sd' ? <span className="hint">основные антенны; вторые — в блоке «Схема резервирования»</span> : null}</h3>
@@ -308,15 +331,26 @@ function Inputs({ link, set }: { link: Link; set(p: Partial<Link>): void }) {
         <h3>Заметки</h3>
         <textarea id={id('notes')} className="textarea" rows={3} value={link.notes} onChange={(e) => set({ notes: e.target.value })} aria-label="Заметки к пролёту" style={{ fontFamily: 'var(--f-ui)' }} />
       </div>
+      <div className="apply-bar">
+        <button type="button" className="btn primary apply-btn" onClick={onApply}><Icon name="check" />Применить</button>
+        {dirty ? <button type="button" className="btn" onClick={onDiscard}>Отменить изменения</button> : null}
+        <span className="hint">{dirty ? 'Изменения ещё не учтены в расчёте.' : 'Все изменения применены.'}</span>
+      </div>
     </>
   );
 }
 
 function ChannelEditor({ i, link, ch, setCh }: { i: 0 | 1; link: Link; ch: Channel; setCh(p: Partial<Channel>): void }) {
-  const { library } = useStore();
+  const { library, saveLibrary } = useStore();
+  const filled = ch.modes.filter((m) => !incomplete(m));
+  const inLib = library.radios.some((r) => r.name === ch.radioName);
+  const saveRadio = () => {
+    const name = ch.radioName || `ППУ ${ghz(ch.freqMHz)}`;
+    saveLibrary({ ...library, radios: [...library.radios, { id: uid(), name, band: ghz(ch.freqMHz), modes: filled.map((m) => ({ ...m })), notes: '' }] });
+    if (!ch.radioName) setCh({ radioName: name });
+  };
   const id = (s: string) => `${link.id}-c${i}-${s}`;
   const fG = ch.freqMHz / 1000;
-  const setMode = (k: number, patch: Partial<ModMode>) => setCh({ modes: ch.modes.map((m, j) => (j === k ? { ...m, ...patch } : m)) });
   return (
     <div className="chan">
       <div className="chan-head">
@@ -338,7 +372,7 @@ function ChannelEditor({ i, link, ch, setCh }: { i: 0 | 1; link: Link; ch: Chann
             <Field label="Корректировка порогов, дБ" htmlFor={id('thc')} hint="внесите значение из паспорта ППУ"><NumField id={id('thc')} value={ch.thrCorrDb ?? 0} min={-20} max={30} onChange={(v) => setCh({ thrCorrDb: v ?? 0 })} /></Field>
           </div>
           <p className="hint">Корректировка порогов прибавляется ко всем порогам в таблице ниже. Требуется внести значение из паспорта ППУ (например, ухудшение порога при включённом XPIC, для другой полосы или температуры): «+» — порог хуже, «−» — лучше. 0 — пороги как в таблице.</p>
-          <Field label="ППУ из справочника" htmlFor={id('radio')} hint="подставит режимы, мощность и пороги">
+          <Field label="ППУ из справочника" htmlFor={id('radio')} hint="подставит типы модуляции, мощность и пороги">
             <select id={id('radio')} className="select" value="" onChange={(e) => {
               const r = library.radios.find((x) => x.id === e.target.value);
               if (r) setCh({ radioName: r.name, modes: r.modes.map((m) => ({ ...m })) });
@@ -347,23 +381,8 @@ function ChannelEditor({ i, link, ch, setCh }: { i: 0 | 1; link: Link; ch: Chann
               {library.radios.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
             </select>
           </Field>
-          <div className="tbl-wrap">
-            <table className="tbl edit">
-              <thead><tr><th>Режим</th><th className="n">Мбит/с</th><th className="n">Мощность, дБм</th><th className="n">Порог, дБм</th><th /></tr></thead>
-              <tbody>
-                {ch.modes.map((m, k) => (
-                  <tr key={k}>
-                    <td><input id={id('mn' + k)} className="input" value={m.name} onChange={(e) => setMode(k, { name: e.target.value })} aria-label="Режим" /></td>
-                    <td><NumField id={id('mr' + k)} value={m.rateMbps} onChange={(v) => setMode(k, { rateMbps: v ?? 0 })} ariaLabel="Скорость" /></td>
-                    <td><NumField id={id('mp' + k)} value={m.txDbm} onChange={(v) => setMode(k, { txDbm: v ?? 0 })} ariaLabel="Мощность передатчика" /></td>
-                    <td><NumField id={id('mt' + k)} value={m.thresholdDbm} onChange={(v) => setMode(k, { thresholdDbm: v ?? -70 })} ariaLabel="Порог приёмника" /></td>
-                    <td><button type="button" className="x" aria-label="Удалить режим" onClick={() => setCh({ modes: ch.modes.filter((_, j) => j !== k) })}>×</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div><button type="button" className="btn sm" onClick={() => { const l = ch.modes[ch.modes.length - 1]; setCh({ modes: [...ch.modes, l ? { ...l, name: 'Новый' } : { name: 'QPSK', rateMbps: 40, txDbm: 20, thresholdDbm: -80 }] }); }}><Icon name="plus" />Режим</button></div>
+          <ModesEditor idBase={id('m')} modes={ch.modes} onChange={(modes) => setCh({ modes })} />
+          {filled.length && !inLib ? <div><button type="button" className="btn sm" onClick={saveRadio}><Icon name="download" />Сохранить ППУ в справочник</button> <span className="hint">«{ch.radioName || `ППУ ${ghz(ch.freqMHz)}`}» — типы модуляции этого ствола</span></div> : null}
         </>
       ) : <p className="hint">Включите, если на эту антенну ставится второй диапазон.</p>}
     </div>

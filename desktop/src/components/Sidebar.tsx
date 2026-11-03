@@ -55,7 +55,7 @@ export function Sidebar(p: Props) {
         <div className="project-row">
           <ProjectPicker onNewProject={p.onNewProject} onCleanup={p.onCleanupProjects} onDeleteOne={p.onDeleteProjectById} />
           <div className="menu-wrap" ref={projRef}>
-            <button type="button" className={`btn sm primary ${menu === 'project' ? '' : 'has-tip'}`} data-tip="Создать проект" aria-label="Создать проект и другие действия с проектами" aria-expanded={menu === 'project'} onClick={() => setMenu(menu === 'project' ? null : 'project')}><Icon name="menu" /></button>
+            <button type="button" className={`btn sm primary ${menu === 'project' ? '' : 'has-tip'}`} data-tip={menu === "project" ? undefined : "Создать проект"} aria-label="Создать проект и другие действия с проектами" aria-expanded={menu === 'project'} onClick={() => setMenu(menu === 'project' ? null : 'project')}><Icon name="menu" /></button>
             {menu === 'project' ? (
               <div className="menu" role="menu">
                 <button role="menuitem" type="button" onClick={() => { close(); p.onNewProject(); }}><Icon name="plus" />Новый проект</button>

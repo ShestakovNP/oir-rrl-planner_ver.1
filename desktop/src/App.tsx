@@ -4,6 +4,7 @@ import { useStore } from './state/store';
 import { vincenty } from './data/calc/geo';
 import { MapView, type FocusRequest, type MapLink, type MapMode } from './map/MapView';
 import { TopBar, type FileAction } from './components/TopBar';
+import { TooltipLayer } from './components/Tooltip';
 import { Guide } from './components/Guide';
 import { Sidebar, type ListTab, type Selection } from './components/Sidebar';
 import { LinkPanel } from './components/LinkPanel';
@@ -19,8 +20,11 @@ import { applyClutter, fetchClutterObjects } from './net/clutter';
 import { useNetState } from './net/online';
 import { buildReport } from './report/report';
 import { saveFile, openTextFile, safeFileName } from './storage/files';
-import { findExisting, importBundle, makeBackup, makeProjectBundle, parseBundle, parseSitesCsv, sitesToCsv, type Bundle } from './storage/exchange';
+import { findExisting, importBundle, newLibraryItems, makeBackup, makeProjectBundle, parseBundle, parseSitesCsv, sitesToCsv, type Bundle } from './storage/exchange';
 import { isTauri } from './platform';
+import { checkUpdate, type UpdateInfo } from './net/update';
+import { BUILD_NUMBER } from './config';
+import { openExternal } from './net/external';
 import { clearTileCache } from './map/tileCache';
 
 type Modal = { kind: 'add-site'; lat?: number; lon?: number } | { kind: 'new-link'; a?: string } | { kind: 'about' } | { kind: 'cleanup' } | null;
@@ -231,6 +235,38 @@ export function App() {
     } catch (e) { fail(e); }
   };
 
+  /* ---------- application update (latest GitHub release) ---------- */
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  useEffect(() => {
+    // One quiet check a few seconds after start; errors (no network) are ignored here.
+    if (!isTauri()) return;
+    const t = window.setTimeout(() => { checkUpdate().then((u) => setUpdate(u.newer ? u : null)).catch(() => {}); }, 4000);
+    return () => window.clearTimeout(t);
+  }, []);
+  const runUpdate = async () => {
+    const u = await checkUpdate();
+    setUpdate(u.newer ? u : null);
+    const date = u.publishedAt ? new Date(u.publishedAt).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
+    if (!u.newer) {
+      notify(`Установлена последняя версия${BUILD_NUMBER ? ` (сборка №${BUILD_NUMBER})` : ''}.`);
+      return;
+    }
+    setDialog({
+      title: 'Доступно обновление',
+      wide: true,
+      body: (
+        <div className="import-info">
+          <p>На GitHub опубликована <b>сборка №{u.number}</b>{date ? <> от {date}</> : null}. У вас {BUILD_NUMBER ? <>сборка №{BUILD_NUMBER}</> : 'сборка без номера'}.</p>
+          {u.assetName ? <p>Будет скачан установщик <b>{u.assetName}</b>. После загрузки закройте программу и запустите его — новая версия установится поверх текущей.</p>
+            : <p>Установщик для вашей системы в выпуске не найден — откроется страница выпуска на GitHub.</p>}
+          <p className="hint">Пока идёт тестирование, новая сборка при первом запуске очищает список проектов. Перед установкой сохраните нужные проекты кнопкой «Экспорт проекта».</p>
+        </div>
+      ),
+      confirm: u.assetName ? 'Скачать установщик' : 'Открыть страницу выпуска',
+      onConfirm: () => { void openExternal(u.assetUrl ?? u.pageUrl).then(() => notify('Загрузка установщика началась в браузере.')).catch(fail); }
+    });
+  };
+
   /* ---------- project exchange between engineers ---------- */
   const exportProject = () => {
     if (!project) return;
@@ -249,7 +285,8 @@ export function App() {
       }
     });
   };
-  const doImport = async (b: Bundle, mode: 'copy' | 'replace') => {
+  let libNew = 0;
+  const doImport = async (b: Bundle, mode: 'copy' | 'replace', addLib: boolean) => {
     let saved = '';
     if (mode === 'replace' && isTauri()) {
       // Keep the local version before it is overwritten.
@@ -265,13 +302,13 @@ export function App() {
         }
       } catch (e) { console.warn('backup before import failed', e); }
     }
-    const res = await importBundle(store.repo, b, mode);
+    const res = await importBundle(store.repo, b, mode, addLib);
     await store.reloadAll();
     if (res.projectId) await store.selectProject(res.projectId);
     setSel(null);
-    notify(mode === 'replace'
+    notify((mode === 'replace'
       ? `Проект обновлён из файла: объектов ${res.sites}, пролётов ${res.links}.${saved ? ` Прежняя версия сохранена: ${saved}` : ''}`
-      : `Импортировано: проектов ${res.projects}, объектов ${res.sites}, пролётов ${res.links}.`);
+      : `Импортировано: проектов ${res.projects}, объектов ${res.sites}, пролётов ${res.links}.`) + (addLib && libNew ? ' ППУ и антенны из файла добавлены в справочник.' : ''));
   };
   const importProject = async () => {
     const f = await openTextFile([{ name: 'Проект или копия ОИР RRL Planner', extensions: ['json'] }]);
@@ -280,11 +317,20 @@ export function App() {
     try { b = parseBundle(JSON.parse(f.text)); } catch (e) { throw e instanceof SyntaxError ? new Error('Файл повреждён или это не файл проекта.') : e; }
     const when = b.exportedAt ? new Date(b.exportedAt).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) : '';
     const fp = b.projects[0];
+    const nl = await newLibraryItems(store.repo, b);
+    libNew = nl.radios + nl.antennas;
+    let addLib = false;
+    const libBox = libNew ? (
+      <label className="check" style={{ margin: '8px 0' }}>
+        <input type="checkbox" onChange={(e) => { addLib = e.target.checked; }} /> Сохранить в справочник оборудование из файла{nl.radios ? `: ППУ — ${nl.radios}` : ''}{nl.antennas ? `${nl.radios ? ',' : ':'} антенн — ${nl.antennas}` : ''}
+      </label>
+    ) : null;
     const info = (
       <div className="import-info">
         <p>Файл: <b>{f.name}</b>{when ? <>, сохранён {when}</> : null}</p>
         {b.kind === 'project' && fp ? <p>Проект «{fp.name}»: объектов {(b.sites || []).length}, пролётов {(b.links || []).length}.</p> : <p>Резервная копия: проектов {b.projects.length}.</p>}
         {b.note ? <div className="import-note"><span>Комментарий отправителя</span>{b.note}</div> : null}
+        {libBox}
       </div>
     );
     const existing = await findExisting(store.repo, b);
@@ -295,17 +341,18 @@ export function App() {
         wide: true,
         body: <>{info}<p>Сейчас у вас в проекте «{existing.name}»: объектов {ss.length}, пролётов {ls.length}.</p><p className="hint">«Обновить проект» заменит ваш проект версией из файла — так забирают проект, который коллега дополнил и вернул. Ваша текущая версия перед этим сохранится в папке настроек программы. «Сохранить копией» добавит файл отдельным проектом, ничего не меняя.</p></>,
         confirm: 'Обновить проект',
-        alt: { label: 'Сохранить копией', onClick: () => { void doImport(b, 'copy').catch(fail); } },
-        onConfirm: () => { void doImport(b, 'replace').catch(fail); }
+        alt: { label: 'Сохранить копией', onClick: () => { void doImport(b, 'copy', addLib).catch(fail); } },
+        onConfirm: () => { void doImport(b, 'replace', addLib).catch(fail); }
       });
       return;
     }
-    setDialog({ title: 'Импорт проекта', wide: true, body: info, confirm: 'Импортировать', onConfirm: () => { void doImport(b, 'copy').catch(fail); } });
+    setDialog({ title: 'Импорт проекта', wide: true, body: info, confirm: 'Импортировать', onConfirm: () => { void doImport(b, 'copy', addLib).catch(fail); } });
   };
 
   const onAction = async (a: FileAction) => {
     try {
       if (a === 'about') return setModal({ kind: 'about' });
+      if (a === 'update') return await runUpdate();
       if (a === 'clear-tiles') return setDialog({ title: 'Очистить кэш карты?', body: 'Загруженные ранее фрагменты карты удалятся. Без интернета карта будет пустой, пока вы снова не посмотрите эти места.', confirm: 'Очистить', danger: true, onConfirm: () => { void clearTileCache().then(() => notify('Кэш карты очищен.')); } });
       if (a === 'backup') {
         const b = await makeBackup(store.repo);
@@ -379,7 +426,7 @@ export function App() {
 
   return (
     <div className="app">
-      <TopBar onAction={(a) => void onAction(a)} onPlace={(p) => { setSearchMark(p); focusOn([[p.lat, p.lon]]); }} guideOpen={guideOpen} onGuide={() => { setGuideOpen((o) => !o); if (!settings.guideDone) store.setSetting('guideDone', true); }} />
+      <TopBar updateAvailable={update?.number ?? null} onAction={(a) => void onAction(a)} onPlace={(p) => { setSearchMark(p); focusOn([[p.lat, p.lon]]); }} guideOpen={guideOpen} onGuide={() => { setGuideOpen((o) => !o); if (!settings.guideDone) store.setSetting('guideDone', true); }} />
       <div className="main">
         <Sidebar
           tab={tab} setTab={setTab} selection={sel} select={(s) => { setSel(s); if (s?.kind === 'site') { const x = sites.find((y) => y.id === s.id); if (x) focusOn([[x.lat, x.lon]]); } if (s?.kind === 'link') { const l = links.find((y) => y.id === s.id); const a = sites.find((y) => y.id === l?.siteA), b = sites.find((y) => y.id === l?.siteB); if (a && b) focusOn([[a.lat, a.lon], [b.lat, b.lon]]); } }}
@@ -462,6 +509,7 @@ export function App() {
       {modal?.kind === 'about' ? <AboutDialog onClose={() => setModal(null)} /> : null}
       {modal?.kind === 'cleanup' ? <ProjectsCleanupDialog onClose={() => setModal(null)} onDeleteOne={async (id) => { const pr = store.projects.find((x) => x.id === id); try { await store.deleteProject(id); notify(`Проект «${pr?.name ?? ''}» удалён.`); } catch (e) { fail(e); } }} onDelete={async (ids) => { try { await store.deleteProjects(ids); setSel(null); notify(`Удалено проектов: ${ids.length}.`); } catch (e) { fail(e); } }} /> : null}
       <Toasts items={toasts} />
+      <TooltipLayer />
     </div>
   );
 }

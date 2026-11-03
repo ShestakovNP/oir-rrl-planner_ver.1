@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { parseCoord } from '../data/calc/geo';
 import { useStore } from '../state/store';
-import { APP_NAME, APP_VERSION, ORG_FULL, TILE_PROVIDERS } from '../config';
+import { APP_NAME, APP_VERSION, BUILD_NUMBER, ORG_FULL, TILE_PROVIDERS } from '../config';
 import { OirMark } from '../brand/Logo';
 import { tileCacheStats } from '../map/tileCache';
 import { Field, Icon, parseNum } from './ui';
@@ -93,7 +93,7 @@ export function AboutDialog({ onClose }: { onClose(): void }) {
   }, [repo]);
   return (
     <Modal title="О программе и данных" onClose={onClose} wide>
-      <div className="about-mark"><OirMark size={56} /><div><b>{APP_NAME}</b><div className="hint">{ORG_FULL} · версия {APP_VERSION}</div></div></div>
+      <div className="about-mark"><OirMark size={56} /><div><b>{APP_NAME}</b><div className="hint">{ORG_FULL} · версия {APP_VERSION}{BUILD_NUMBER ? ` · сборка №${BUILD_NUMBER}` : ''}</div></div></div>
       <div className="section">
         <h3>Где хранятся данные</h3>
         <p>Все проекты, объекты, пролёты и справочник хранятся только на этом компьютере, в файле базы данных:</p>
