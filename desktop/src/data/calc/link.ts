@@ -11,9 +11,14 @@ import { downtime, fmt, ghz, polName } from './format';
 import { buildRecommendations, type Rec } from './recommend';
 import { comparePolarization, type PolarizationResult } from './polarization';
 import { waterReflection, waterShare, type WaterReflection } from './water';
+import { acmAverageRate, momentsRain, type MomentsRain } from './acm';
 import { coSiteInterference, type InterferenceResult, type Neighbor } from './interference';
 import { SCHEME_SHORT, diversityValidity, fdImprovement, protectionOf, sdImprovement } from './protection';
 import type { ProtectionScheme } from '../types';
+import {
+  DEFAULT_GOST, GOST_RAIN_XI, GOST_REGIONS, diversity as gostDiversity, gostRain, gostRainRate, kOfG, levelsOf, multipath as gostMultipath,
+  multipathQuality, regionStats, selectiveMargin, subrefQuality, subrefraction, type GostParams
+} from './gost';
 
 export interface Sample {
   d: number;
@@ -57,6 +62,49 @@ export interface ModeResult extends ModMode {
   /** false = strong sub-refraction eats the whole margin. */
   subOk: boolean;
   ok: boolean;
+  /** ГОСТ Р 53363-2009 details of this mode (null for ITU-R). */
+  g?: GostMode | null;
+}
+
+/** Per-mode results of ГОСТ Р 53363-2009, % (worst month for multipath and sub-refraction). */
+export interface GostMode {
+  /** Selective fading margin, dB (Infinity = not counted). */
+  Fsel: number;
+  p0: number;
+  pFlat: number;
+  pSel: number;
+  /** Multipath fading after diversity, %. */
+  pMl: number;
+  pSub: number;
+  rainAS: number;
+  kMl: number;
+  kRain: number;
+  kSub: number;
+  kApp: number;
+  sesrMl: number;
+  sesrRain: number;
+  sesrSub: number;
+  sesr: number;
+  /** Diversity improvement at this margin (1 = none). */
+  I: number;
+}
+export interface GostChannel {
+  params: GostParams;
+  regionName: string;
+  gMean: number;
+  sigma: number;
+  sigmaR: number;
+  xi: number;
+  /** Rain intensity of section 16.1, mm/h. */
+  J: number;
+  gamma: number;
+  /** Mean antenna height above sea level, m, and the path inclination, mrad. */
+  hMean: number;
+  eps: number;
+  kind: 'hilly' | 'mountain' | 'high';
+  /** Relative clearance p(ḡ) = H/H0. */
+  pRel: number;
+  notes: string[];
 }
 
 export interface ChannelResult {
@@ -96,6 +144,12 @@ export interface ChannelResult {
   div: DiversityResult | null;
   /** Interference from other links at the same objects on overlapping frequencies. */
   intf: InterferenceResult | null;
+  /** Average throughput with adaptive modulation, Mbit/s (Stepanets 2024, formula 2.2). */
+  avgRate: number;
+  /** Rain modelled by the method of moments from local statistics (E-band). */
+  rainMoments: MomentsRain | null;
+  /** ГОСТ Р 53363-2009 inputs and intermediate values (null for ITU-R). */
+  gost: GostChannel | null;
 }
 
 export interface DiversityBranch {
@@ -157,11 +211,14 @@ export interface LinkResult {
   /** Allowed unavailability, % of year. */
   uNorm: number;
   totalRate: number;
+  /** Average throughput of all stems with adaptive modulation, Mbit/s. */
+  avgRate: number;
   verdict: { level: Level; label: string; title: string; sub: string };
   recs: Rec[];
   polarization: PolarizationResult;
   /** Share of the path over water, 0…1. */
   water: number;
+  method: 'itu' | 'gost';
 }
 
 /** True when channel 2 is enabled and its band overlaps channel 1 (dual-polarization co-channel operation). */
@@ -293,6 +350,9 @@ export function calcChannel(ctx: Ctx, ch: Channel, n: 1 | 2, polOverride?: Pol):
   const hsbLoss = prot?.scheme === 'hsb' ? 2 * Math.max(0, prot.hsbLossDb || 0) : 0;
   const fixed = gA + gB - link.feederA - link.feederB - link.otherLoss - hsbLoss;
   const rain = rainModel(fGHz, D, link.climate.rainR001, pol);
+  const er = link.climate.eRain;
+  const rainMoments = er?.on && fGHz >= 57 ? momentsRain(er.pdPct, er.asrDb, er.daDb2) : null;
+  const rainP = (M: number) => (rainMoments ? rainMoments.pFor(M) : rain.pFor(M));
   const c = link.climate;
   const refl = waterReflection(path, geom.s, k, kMin, fGHz, pol, link.dishA, link.dishB);
   const intf: InterferenceResult | null = neighbors.length ? coSiteInterference(link, sA, sB, ch, pol, gA, gB, neighbors) : null;
@@ -324,6 +384,64 @@ export function calcChannel(ctx: Ctx, ch: Channel, n: 1 | 2, polOverride?: Pol):
   };
   const mpOf = (M: number) => multipathWorstMonth(D, fGHz, c0.dN1, slope, hLow, M) / improve(M);
   const reflLoss = refl ? refl.applied : 0;
+  /* ГОСТ Р 53363-2009 */
+  const gp: GostParams | null = c.method === 'gost' ? { ...DEFAULT_GOST, ...(c.gost ?? {}) } : null;
+  let gch: GostChannel | null = null;
+  let gostEval: ((M: number, Fsel: number) => GostMode) | null = null;
+  if (gp) {
+    const st = regionStats(gp, D);
+    const xi = (GOST_RAIN_XI[gp.rainTerritory] ?? GOST_RAIN_XI[0]).xi;
+    const lat = (sA.lat + sB.lat) / 2, lon = (sA.lon + sB.lon) / 2;
+    const J = gostRainRate(xi, lat, lon);
+    const hMean = (path.HA + path.HB) / 2, eps = Math.abs(path.HA - path.HB) / D;
+    const coastal = gp.terrain !== 'land';
+    const pRel = geom.crit ? geom.crit.rel * Math.sqrt(3) : 0;
+    // Diffraction loss growth from ḡ to gв = ḡ + 4.3σ(R), tabulated once (sub-refraction, section 12).
+    const gHi = st.gMean + 4.3 * st.sigmaR;
+    const tbl: { g: number; dl: number }[] = [];
+    for (let i = 0; i <= 32; i++) {
+      const g = st.gMean + ((gHi - st.gMean) * i) / 32;
+      const gm = geometry(path, kOfG(g), fGHz);
+      const dl = (gm.crit ? Math.max(0, knifeEdge(gm.crit.H, gm.crit.F1)) : 0) - diff;
+      tbl.push({ g, dl: Math.max(i ? tbl[i - 1].dl : 0, dl) });
+    }
+    const dlAt = (g: number) => {
+      if (g <= tbl[0].g) return tbl[0].dl;
+      for (let i = 1; i < tbl.length; i++) if (g <= tbl[i].g) { const a = tbl[i - 1], b = tbl[i]; return a.dl + ((b.dl - a.dl) * (g - a.g)) / (b.g - a.g || 1); }
+      return tbl[tbl.length - 1].dl;
+    };
+    const kind = gostMultipath(D, fGHz, 30, Infinity, hMean, eps, gp.terrain).kind;
+    const notes: string[] = [];
+    if (fGHz > 20 && kind === 'hilly') notes.push('Формулы многолучёвых замираний раздела 13.1 даны для частот до 20 ГГц; выше — экстраполяция.');
+    if (prot?.scheme === 'sd' && fGHz >= 20) notes.push('Для пространственного разнесения выше 20 ГГц применена формула (14.3).');
+    gch = { params: gp, regionName: (GOST_REGIONS.find((x) => x.id === gp.region) ?? GOST_REGIONS[1]).name, gMean: st.gMean, sigma: st.sigma, sigmaR: st.sigmaR, xi, J, gamma: 0, hMean, eps, kind, pRel, notes };
+    gostEval = (M: number, Fsel: number): GostMode => {
+      const kApp = Math.max(0, gp.kAppPct || 0);
+      if (!(M > 0)) return { Fsel, p0: 0, pFlat: 100, pSel: 0, pMl: 100, pSub: 100, rainAS: 100, kMl: 100, kRain: 100, kSub: 100, kApp, sesrMl: 0, sesrRain: 0, sesrSub: 0, sesr: 100, I: 1 };
+      const mp = gostMultipath(D, fGHz, M, Fsel, hMean, eps, gp.terrain);
+      let pMl = mp.p, I = 1;
+      if (prot?.scheme === 'sd') {
+        const vs = [brA, brB].filter((b): b is NonNullable<typeof brA> => !!b).map((b) => gostDiversity('sd', mp, fGHz, D, M, { S: b.S, coastal }));
+        if (vs.length) { const w = vs.reduce((a, b) => (b.p > a.p ? b : a)); pMl = w.p; I = w.I; }
+      } else if (prot?.scheme === 'fd') {
+        const v = gostDiversity('fd', mp, fGHz, D, M, { dfGHz: fdSpacing, coastal });
+        pMl = v.p; I = v.I;
+      }
+      const q = multipathQuality(pMl, M, Fsel, fGHz, D, pRel, gp.terrain, mp.kind !== 'hilly');
+      const rn = gostRain(J, fGHz, pol, D, M, lat, lon);
+      const pSub = subrefraction((g) => M - dlAt(g), st.gMean, st.sigmaR).p;
+      const sq = subrefQuality(pSub, gp.terrain);
+      const sesr = q.sesr + rn.sesr + sq.sesr;
+      return { Fsel, p0: mp.p0, pFlat: mp.pFlat, pSel: mp.pSel, pMl, pSub, rainAS: rn.AS, kMl: q.kng, kRain: rn.kng, kSub: sq.kng, kApp, sesrMl: q.sesr, sesrRain: rn.sesr, sesrSub: sq.sesr, sesr, I };
+    };
+    gch.gamma = gostRain(J, fGHz, pol, D, 30, lat, lon).gamma;
+  }
+  const fselOf = (m: ModMode) => {
+    if (!gp) return Infinity;
+    const lv = levelsOf(m.name);
+    return lv ? selectiveMargin(m.rateMbps / 1000, lv.M, lv.psk, D, fGHz, gp.terrain !== 'land') : Infinity;
+  };
+  const sesrNorm = gp && gp.sesrNormPct != null && gp.sesrNormPct > 0 ? gp.sesrNormPct : null;
   const thrCorr = Number.isFinite(ch.thrCorrDb) ? (ch.thrCorrDb as number) : 0;
   const modes: ModeResult[] = ch.modes
     .filter((m) => Number.isFinite(m.txDbm) && Number.isFinite(m.thresholdDbm))
@@ -337,9 +455,14 @@ export function calcChannel(ctx: Ctx, ch: Channel, n: 1 | 2, polOverride?: Pol):
       const degr = Number.isFinite(ciTot) ? 10 * Math.log10(1 + Math.pow(10, (requiredSnr(m.name) - ciTot) / 10)) : 0;
       const prx = m.txDbm + fixed - FSL - diff - gas - reflLoss;
       const margin = prx - m.thresholdDbm - degr;
+      if (gostEval) {
+        const g = gostEval(margin, fselOf(m));
+        const u = Math.min(100, g.kApp + g.kMl + g.kRain + g.kSub);
+        return { ...m, prx, deg: degr, margin, mpMonth: g.pMl, mpYear: g.kMl, rainYear: g.kRain, u, subOk: g.pSub < 0.01, ok: margin > 0 && u <= uNorm && (sesrNorm == null || g.sesr <= sesrNorm), g };
+      }
       const mpMonth = mpOf(margin);
       const mpYear = mpMonth * c.monthToYear;
-      const rainYear = rain.pFor(margin);
+      const rainYear = rainP(margin);
       const u = Math.min(100, mpYear + rainYear);
       return { ...m, prx, deg: degr, margin, mpMonth, mpYear, rainYear, u, subOk: diffMin - diff < margin, ok: margin > 0 && u <= uNorm };
     });
@@ -349,7 +472,12 @@ export function calcChannel(ctx: Ctx, ch: Channel, n: 1 | 2, polOverride?: Pol):
   const best = pick(okList);
   const top = pick(working);
   const next = modes.slice().sort((a, b) => a.rateMbps - b.rateMbps).find((r) => !r.ok && (!best || r.rateMbps > best.rateMbps)) || null;
-  const unav = (M: number) => Math.min(100, mpOf(M) * c.monthToYear + rain.pFor(M));
+  const refMode = best || working[0] || modes[0] || null;
+  const refFsel = refMode ? fselOf(refMode) : Infinity;
+  const unav = (M: number) => {
+    if (gostEval) { const g = gostEval(M, refFsel); return Math.min(100, g.kApp + g.kMl + g.kRain + g.kSub); }
+    return Math.min(100, mpOf(M) * c.monthToYear + rainP(M));
+  };
   let lo = 0, hi = 90;
   for (let i = 0; i < 40; i++) {
     const m = (lo + hi) / 2;
@@ -360,6 +488,7 @@ export function calcChannel(ctx: Ctx, ch: Channel, n: 1 | 2, polOverride?: Pol):
     n, ch, tag: 'Ст' + n, label: `${ghz(ch.freqMHz)} · ${polName(pol)}`, fGHz, pol, geom, geomMin, FSL, diff, diffMin, gasK, gas,
     gA, gB, gAcalc, gBcalc, beamA: beamwidth(link.dishA, fGHz), beamB: beamwidth(link.dishB, fGHz), fixed, rain, modes,
     best, working, top, next, ref: best || working[0] || modes[0] || null, marginRequired: hi, refl, intf: intf && intf.list.length ? intf : null,
+    avgRate: acmAverageRate(modes.map((x) => ({ rateMbps: x.rateMbps, u: x.margin > 0 ? x.u : 100 }))), rainMoments: gp ? null : rainMoments, gost: gch,
     div: prot ? (() => {
       const refM = (best || working[0] || modes[0])?.margin ?? 0;
       const fin = (b: typeof brA): DiversityBranch | null => (b ? { h: b.h, S: b.S, V: b.V, gain: b.gain, rel: b.rel, relMin: b.relMin, diff: b.diff, I: b.Ifn(refM) } : null);
@@ -367,6 +496,11 @@ export function calcChannel(ctx: Ctx, ch: Channel, n: 1 | 2, polOverride?: Pol):
       const Ss = [brA?.S, brB?.S].filter((x): x is number => x != null);
       const validity = prot.scheme === 'sd' ? diversityValidity('sd', fGHz, D, Ss.length ? Math.min(...Ss) : undefined)
         : prot.scheme === 'fd' ? diversityValidity('fd', fGHz, D, undefined, fdSpacing / fGHz) : [];
+      if (gostEval && (prot.scheme === 'sd' || prot.scheme === 'fd')) {
+        const refG = gostEval(refM, refFsel);
+        const finG = (b: typeof brA): DiversityBranch | null => (b ? { ...fin(b)!, I: refG.I } : null);
+        return { scheme: prot.scheme, a: finG(brA), b: finG(brB), I: refG.I, hsbLoss, mpPlain: refG.pFlat + refG.pSel, mpDiv: refG.pMl, validity: [] };
+      }
       return { scheme: prot.scheme, a: fin(brA), b: fin(brB), I: prot.scheme === 'fd' ? fdImprovement(fdSpacing, fGHz, D, refM) : improve(refM), hsbLoss, mpPlain: plain, mpDiv: plain / improve(refM), validity };
     })() : null
   };
@@ -383,7 +517,13 @@ export function calculateLink(link: Link, A: Site, B: Site, neighbors: Neighbor[
   } else errors.push('У объектов не заданы корректные координаты.');
   const { path, warnings } = buildPath(link, A, B, geo);
   const c = link.climate;
-  const k = c.k, kMin = c.kMin;
+  const gostOn = c.method === 'gost';
+  let k = c.k, kMin = c.kMin;
+  if (gostOn && geo) {
+    const st = regionStats({ ...DEFAULT_GOST, ...(c.gost ?? {}) }, geo.km);
+    k = kOfG(st.gMean);
+    kMin = kOfG(st.gMean + 4.3 * st.sigmaR);
+  }
   const uNorm = 100 - c.availabilityPct;
   const D = path.D;
   const channels = link.channels
@@ -444,7 +584,7 @@ export function calculateLink(link: Link, A: Site, B: Site, neighbors: Neighbor[
   const base: LinkResult = {
     ok: !errors.length, errors, warnings, siteA: A, siteB: B, climate: link.climate, geo, path, k, kMin, geom, geomMin,
     clearance: { rel: geom.crit ? geom.crit.rel : null, ...cs }, tiltA, tiltB, channels: results, multi, coChannel, samePol, xpd,
-    uNorm, totalRate, verdict: { level, label, title, sub }, recs: [], polarization: { channels: [], pair: null }, water: waterShare(path)
+    uNorm, totalRate, avgRate: Math.round(results.reduce((s, x) => s + x.avgRate, 0) * 10) / 10, verdict: { level, label, title, sub }, recs: [], polarization: { channels: [], pair: null }, water: waterShare(path), method: gostOn ? 'gost' : 'itu'
   };
   if (!errors.length && results.length) {
     base.polarization = comparePolarization(base, ctx);

@@ -1,7 +1,7 @@
 /** PDF reports: one link, or a whole project (summary page + one section per link). */
 import { PdfDoc } from './pdf/writer';
 import type { Link, Project } from '../data/types';
-import { interferenceRows, protectionRows } from '../data/calc/protectionText';
+import { gostRows, interferenceRows, protectionRows } from '../data/calc/protectionText';
 import { SCHEME_NAMES } from '../data/calc/protection';
 import { geometry, surfaceRuns, type Level, type LinkResult } from '../data/calc/link';
 import { downtime, fmt, ghz, pct, polLong, polName, stripMarks } from '../data/calc/format';
@@ -207,9 +207,10 @@ function linkSection(L: Layout, it: ReportItem, project: Project | null, date: s
   const facts: [string, string, string][] = [
     ['Длина пролёта', fmt(r.path.D, 2), 'км'],
     ['Просвет', r.clearance.rel == null ? '—' : r.clearance.rel > 3 ? '> 300%' : Math.round(r.clearance.rel * 100) + '%', r.clearance.label.toLowerCase()],
-    r.multi ? ['Скорость в норме', fmt(r.totalRate, 1), 'Мбит/с, сумма стволов'] : ['Запас' + (r.channels[0]?.ref ? ' ' + r.channels[0].ref.name : ''), r.channels[0]?.ref ? fmt(r.channels[0].ref.margin, 1) : '—', 'дБ']
+    r.multi ? ['Скорость в норме', fmt(r.totalRate, 1), 'Мбит/с, сумма стволов'] : ['Запас' + (r.channels[0]?.ref ? ' ' + r.channels[0].ref.name : ''), r.channels[0]?.ref ? fmt(r.channels[0].ref.margin, 1) : '—', 'дБ'],
+    ['Средняя скорость с ACM', fmt(r.avgRate, 1), 'Мбит/с']
   ];
-  const fw = (CW - 20) / 3;
+  const fw = (CW - 10 * (facts.length - 1)) / facts.length;
   facts.forEach((f, i) => {
     const x = M + i * (fw + 10);
     pdf.rect(x, L.y, fw, 52, { fill: C.soft });
@@ -309,6 +310,7 @@ function linkSection(L: Layout, it: ReportItem, project: Project | null, date: s
   const steps: Row[] = [
     row(['Длина пролёта', { t: r.geo ? 'по координатам, эллипсоид WGS-84' : 'по профилю', color: C.muted }, { t: fmt(r.path.D, 3) + ' км', bold: true }]),
     row(['Угол места A / B', { t: `при k = ${fmt(r.k, 2)}`, color: C.muted }, { t: `${fmt(r.tiltA, 2)}° / ${fmt(r.tiltB, 2)}°`, bold: true }]),
+    row(['Методика расчёта', '', { t: r.method === 'gost' ? 'ГОСТ Р 53363-2009' : 'МСЭ-R P.530', bold: true }]),
     row(['Допустимая неготовность', { t: 'из нормы', color: C.muted }, { t: `${pct(r.uNorm)} · ${downtime(r.uNorm)}`, bold: true }])
   ];
   r.channels.forEach((c) => {
@@ -325,37 +327,53 @@ function linkSection(L: Layout, it: ReportItem, project: Project | null, date: s
     if (c.ref) steps.push(row([`Сигнал на приёмнике, ${c.ref.name}`, { t: `мощность ${fmt(c.ref.txDbm, 1)} дБм + антенны − потери`, color: C.muted }, { t: fmt(c.ref.prx, 1) + ' дБм', bold: true }]));
     protectionRows(r, c).forEach((x) => steps.push(row([x.t, { t: x.s, color: C.muted }, { t: x.v, bold: true }])));
     interferenceRows(r, c).forEach((x) => steps.push(row([x.t, { t: x.s, color: C.muted }, { t: x.v, bold: true }])));
+    gostRows(r, c).forEach((x) => steps.push(row([x.t, { t: x.s, color: C.muted }, { t: x.v, bold: true }])));
+    steps.push(row(['Средняя скорость с ACM', { t: 'Cср = Σ Ci·(Pн(i+1) − Pн(i)) (Степанец И.В., 2024)', color: C.muted }, { t: fmt(c.avgRate, 1) + ' Мбит/с', bold: true }]));
+    if (c.rainMoments) steps.push(row(['Дождь по методу моментов', { t: `α ${fmt(c.rainMoments.alpha, 4)}, β ${fmt(c.rainMoments.beta, 3)}, δ ${fmt(c.rainMoments.delta, 3)}`, color: C.muted }, { t: 'по местной статистике', bold: true }]));
     steps.push(row(['Запас, нужный для нормы', { t: 'чтобы перерывов было не больше допустимого', color: C.muted }, { t: fmt(c.marginRequired, 1) + ' дБ', bold: true }]));
-    steps.push(row(['Дождь: ослабление в ливень', { t: `${fmt(r.climate.rainR001, 0)} мм/ч, ${fmt(c.rain.gamma, 3)} дБ/км`, color: C.muted }, { t: fmt(c.rain.A001, 1) + ' дБ', bold: true }]));
+    if (!c.gost) steps.push(row(['Дождь: ослабление в ливень', { t: `${fmt(r.climate.rainR001, 0)} мм/ч, ${fmt(c.rain.gamma, 3)} дБ/км`, color: C.muted }, { t: fmt(c.rain.A001, 1) + ' дБ', bold: true }]));
   });
   L.table([{ t: 'Величина', w: 38 }, { t: 'Пояснение', w: 38 }, { t: 'Значение', w: 24, align: 'right' }], steps);
 
   L.h2('Исходные данные: климат и норма');
   const cl = r.climate;
+  const gc = r.channels.find((x) => x.gost)?.gost;
+  if (gc) {
+    const gp = gc.params;
+    L.table([{ t: 'Параметр', w: 60 }, { t: 'Значение', w: 40, align: 'right' }], [
+      row(['Методика', 'ГОСТ Р 53363-2009']),
+      row(['Климатический район (приложение Б)', `${gp.region}, ${gp.season === 'winter' ? 'зимние' : 'летние'} месяцы`]),
+      row(['Тип трассы', gp.terrain === 'land' ? 'сухопутная' : gp.terrain === 'coast' ? 'приморская' : 'побережье арктических морей']),
+      row(['Коэффициент ξ (приложение В)', fmt(gc.xi, 2)]),
+      row(['Интенсивность дождя J', fmt(gc.J, 1) + ' мм/ч']),
+      row(['Неготовность аппаратуры', fmt(gp.kAppPct, 4) + ' %']),
+      row(['Норма SESR', gp.sesrNormPct ? fmt(gp.sesrNormPct, 4) + ' %' : 'не задана']),
+      row(['Затухание в газах', cl.gasDbPerKm != null ? fmt(cl.gasDbPerKm, 3) + ' дБ/км' : 'по частоте (МСЭ-R P.676)']),
+      row(['Норма коэффициента готовности', fmt(cl.availabilityPct, 5) + ' %'])
+    ]);
+  } else
   L.table([{ t: 'Параметр', w: 60 }, { t: 'Значение', w: 40, align: 'right' }], [
-    row(['Рефракция k (обычная / плохая погода)', `${fmt(cl.k, 2)} / ${fmt(cl.kMin, 2)}`]),
-    row(['Градиент рефракции dN1', fmt(cl.dN1, 0)]),
-    row(['Интенсивность дождя, превышаемая 0,01 % времени', fmt(cl.rainR001, 0) + ' мм/ч']),
-    row(['Затухание в газах', cl.gasDbPerKm != null ? fmt(cl.gasDbPerKm, 3) + ' дБ/км' : 'по частоте (МСЭ-R P.676)']),
-    row(['Пересчёт худшего месяца на год', fmt(cl.monthToYear, 2)]),
-    row(['Норма доступности', fmt(cl.availabilityPct, 5) + ' %'])
-  ]);
+      row(['Рефракция k (обычная / плохая погода)', `${fmt(cl.k, 2)} / ${fmt(cl.kMin, 2)}`]),
+      row(['Градиент рефракции dN1', fmt(cl.dN1, 0)]),
+      row(['Интенсивность дождя, превышаемая 0,01 % времени', fmt(cl.rainR001, 0) + ' мм/ч']),
+      row(['Затухание в газах', cl.gasDbPerKm != null ? fmt(cl.gasDbPerKm, 3) + ' дБ/км' : 'по частоте (МСЭ-R P.676)']),
+      row(['Пересчёт худшего месяца на год', fmt(cl.monthToYear, 2)]),
+      row(['Норма доступности', fmt(cl.availabilityPct, 5) + ' %'])
+    ]);
 
+  // The point-by-point profile table is not printed: it took many pages and an engineer needs the result.
+  // The profile itself is on the chart above; the points stay in the program (tab «Профиль»).
   if (link.profile.length >= 2) {
-    L.h2(`Профиль местности: точки (${link.profileSource === 'srtm' ? 'SRTM 30 м' : 'введён вручную'})`);
-    const pts = link.profile, per = Math.ceil(pts.length / 2);
-    const rows: Row[] = [];
-    for (let i = 0; i < per; i++) {
-      const a = pts[i], b = pts[i + per];
-      rows.push(row([a ? fmt(a.d, 3) : '', a ? fmt(a.g, 1) : '', a ? fmt(a.c, 1) : '', b ? fmt(b.d, 3) : '', b ? fmt(b.g, 1) : '', b ? fmt(b.c, 1) : '']));
-    }
-    L.table([{ t: 'км', w: 16, align: 'right' }, { t: 'Земля, м', w: 17, align: 'right' }, { t: 'Лес/здания, м', w: 17, align: 'right' }, { t: 'км', w: 16, align: 'right' }, { t: 'Земля, м', w: 17, align: 'right' }, { t: 'Лес/здания, м', w: 17, align: 'right' }], rows, { size: 8 });
+    const src = link.profileSource === 'srtm' ? 'рельеф SRTM 30 м' : link.profileSource === 'manual' ? 'рельеф введён вручную' : 'рельеф не задан';
+    const cl2 = link.clutterSource === 'osm' ? ', здания, лес и вода — OpenStreetMap' : link.clutterSource === 'manual' ? ', препятствия заданы вручную' : '';
+    L.para(`Профиль трассы: ${src}${cl2}; точек: ${link.profile.length}. Таблица точек хранится в программе (вкладка «Профиль»).`, { size: 8.5, color: C.muted });
   }
   if (link.notes) { L.h2('Заметки', 20); L.para(link.notes, { size: 9.5, color: C.body }); }
 }
 
-function methodology(L: Layout) {
+function methodology(L: Layout, gost = false) {
   L.h2('Методика', 40);
+  if (gost) L.para('Вероятности замираний и показатели качества рассчитаны по ГОСТ Р 53363-2009 «Цифровые радиорелейные линии. Показатели качества. Методы расчёта»: эквивалентный радиус Земли — по климатическому району (приложение Б), субрефракция — раздел 12, гладкие и селективные интерференционные замирания на пересечённых, горных и высокогорных трассах — раздел 13, разнесённый приём — раздел 14, SESR и коэффициент неготовности от многолучёвости, дождя и субрефракции — разделы 15–18, интенсивность дождя по координатам — формула (16.1) и приложение В. Слабопересечённые трассы и трассы над водой (раздел 13.2) считаются как пересечённые; неготовность аппаратуры (раздел 5) вводится готовым значением. Уровень сигнала, дифракция и затухание в газах — так же, как описано ниже.', { size: 9, color: C.body });
   L.para('Потери в свободном пространстве, азимуты (эллипсоид WGS-84) и углы места рассчитываются точно. Дифракция на препятствии — модель одиночного препятствия-ножа. Многолучевые замирания — быстрый метод МСЭ-R P.530. Дождь — МСЭ-R P.530 и P.838. Затухание в газах — МСЭ-R P.676, стандартная атмосфера. Отражение от водной глади — двухлучевая модель: точка зеркального отражения на эквивалентной Земле, коэффициент отражения пресной воды по Френелю (диэлектрическая проницаемость по модели Дебая), фактор расходимости, рассеяние на волнении (σ = 0,1 м), подавление отражённого луча диаграммой антенн; в уровень сигнала входят только потери при расчётном k, худший случай при k от kmin до 3 приведён отдельно. Методика НИИР учитывает больше факторов, поэтому вероятности перерывов могут отличаться от расчёта в DRRL. Для рабочего проекта сверяйте результат с DRRL или Pathloss.', { size: 9, color: C.body });
 }
 
@@ -380,10 +398,10 @@ export function buildReport(items: ReportItem[], project: Project | null): Uint8
         const worst = r.channels.map((c) => c.best?.u ?? NaN).filter(Number.isFinite);
         return row([{ t: `${r.siteA.name} — ${r.siteB.name}`, bold: true }, fmt(r.path.D, 2), r.channels.map((c) => ghz(c.ch.freqMHz)).join(', '), fmt(r.totalRate, 1), worst.length ? downtime(Math.max(...worst)) : '—', { t: r.verdict.label, bold: true, color: SEM[r.verdict.level], fill: SEMS[r.verdict.level] }]);
       }));
-    methodology(L);
+    methodology(L, items.some((x) => x.result.method === 'gost'));
   }
   items.forEach((it) => linkSection(L, it, project, date));
-  if (items.length === 1) methodology(L);
+  if (items.length === 1) methodology(L, items[0].result.method === 'gost');
   const n = pdf.pageCount;
   for (let i = 0; i < n; i++) {
     pdf.setPage(i);

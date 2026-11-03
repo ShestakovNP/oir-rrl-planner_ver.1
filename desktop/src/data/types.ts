@@ -73,6 +73,27 @@ export interface Climate {
   monthToYear: number;
   /** Required availability, %. */
   availabilityPct: number;
+  /**
+   * E-band rain from local statistics (method of moments, Stepanets 2024): probability of rain, %,
+   * mean attenuation during rain, dB, and its variance, dB². Used above 57 GHz when `on`.
+   */
+  eRain?: { on: boolean; pdPct: number; asrDb: number; daDb2: number };
+  /** Methodology: ITU-R P.530 (default) or ГОСТ Р 53363-2009. */
+  method?: 'itu' | 'gost';
+  /** Inputs of ГОСТ Р 53363-2009 (used when method = 'gost'). */
+  gost?: {
+    /** Climate region of Appendix Б (1…16). */
+    region: number;
+    season: 'summer' | 'winter';
+    /** land — сухопутная трасса, coast — приморская (тёплые и умеренные моря), arctic — побережье арктических морей. */
+    terrain: 'land' | 'coast' | 'arctic';
+    /** Row of Appendix В (rain coefficient ξ). */
+    rainTerritory: number;
+    /** Equipment unavailability (section 5), %. */
+    kAppPct: number;
+    /** SESR norm, %; null = not checked. */
+    sesrNormPct: number | null;
+  };
 }
 
 /**

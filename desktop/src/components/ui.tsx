@@ -119,7 +119,9 @@ export interface DialogSpec {
   confirm?: string;
   danger?: boolean;
   cancel?: string | null;
-  input?: { label: string; value: string };
+  input?: { label: string; value: string; optional?: boolean; multiline?: boolean; placeholder?: string };
+  /** Extra button between «Отмена» and the main one. */
+  alt?: { label: string; onClick(): void };
   wide?: boolean;
   onConfirm?(value?: string): void;
 }
@@ -136,7 +138,7 @@ export function Dialog({ spec, onClose }: { spec: DialogSpec; onClose(): void })
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
   const ok = () => {
-    if (spec.input && !val.trim()) return;
+    if (spec.input && !spec.input.optional && !val.trim()) return;
     spec.onConfirm?.(spec.input ? val.trim() : undefined);
     onClose();
   };
@@ -147,11 +149,14 @@ export function Dialog({ spec, onClose }: { spec: DialogSpec; onClose(): void })
         {spec.body ? <div>{spec.body}</div> : null}
         {spec.input ? (
           <Field label={spec.input.label} htmlFor="dlg-input">
-            <input id="dlg-input" ref={ref} className="input" value={val} onChange={(e) => setVal(e.target.value)} />
+            {spec.input.multiline
+              ? <textarea id="dlg-input" autoFocus className="textarea" rows={4} value={val} placeholder={spec.input.placeholder} onChange={(e) => setVal(e.target.value)} style={{ fontFamily: 'var(--f-ui)', height: 'auto', padding: '6px 9px' }} />
+              : <input id="dlg-input" ref={ref} className="input" value={val} placeholder={spec.input.placeholder} onChange={(e) => setVal(e.target.value)} />}
           </Field>
         ) : null}
         <div className="actions">
           {spec.cancel !== null ? <button type="button" className="btn" onClick={onClose}>{spec.cancel ?? 'Отмена'}</button> : null}
+          {spec.alt ? <button type="button" className="btn" onClick={() => { spec.alt!.onClick(); onClose(); }}>{spec.alt.label}</button> : null}
           <button ref={okRef} type="submit" className={`btn ${spec.danger ? 'danger' : 'primary'}`}>{spec.confirm ?? 'OK'}</button>
         </div>
       </form>

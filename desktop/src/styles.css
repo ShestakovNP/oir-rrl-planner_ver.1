@@ -205,7 +205,7 @@ h1, h2, h3, h4 { margin: 0; text-wrap: balance; }
 .verdict .lbl { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 .verdict .ttl { color: var(--ink); font-weight: 650; font-size: 14.5px; line-height: 1.35; }
 .verdict .sub2 { color: var(--ink-2); font-size: 12.5px; }
-.facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
 .fact { background: var(--sunk); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .fact .k { font-size: 11.5px; color: var(--muted); }
 .fact .v { font-family: var(--f-mono); font-size: 19px; font-weight: 500; }
@@ -432,3 +432,14 @@ table.tbl { border-collapse: collapse; width: 100%; font-size: 12.5px; }
 .search-icon { background: none; border: 0; }
 .search-pin { width: 26px; height: 34px; background: no-repeat center/contain url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 34'><path d='M13 33s11-11.2 11-19.5A11 11 0 0 0 2 13.5C2 21.8 13 33 13 33z' fill='%23d0453a' stroke='white' stroke-width='2'/><circle cx='13' cy='13.5' r='4.2' fill='white'/></svg>"); filter: drop-shadow(0 2px 3px rgba(0,0,0,.35)); }
 .site-pop-body .btn + .btn { margin-top: 4px; }
+
+.method-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.method-label { color: var(--muted); font-size: 12px; }
+.gost-facts { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 10px 0 4px; padding: 8px 10px; background: var(--sunk); border-radius: 6px; font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.exchange-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.exchange-row .btn { justify-content: center; }
+.import-info p { margin: 0 0 6px; }
+.import-note { margin: 8px 0; padding: 8px 10px; border-left: 3px solid var(--accent); background: var(--sunk); border-radius: 4px; white-space: pre-wrap; }
+.import-note span { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+.dialog p.hint { margin-top: 8px; }

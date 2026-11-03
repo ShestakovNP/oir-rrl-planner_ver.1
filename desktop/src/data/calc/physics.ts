@@ -48,7 +48,7 @@ const RAIN: [number, number, number, number, number][] = [
   [70, 1.0315, 0.7345, 1.0253, 0.7215], [80, 1.1704, 0.7115, 1.1668, 0.7021], [90, 1.2807, 0.6944, 1.2795, 0.6876],
   [100, 1.3671, 0.6815, 1.3680, 0.6765]
 ];
-function rainCoef(fGHz: number, pol: 'H' | 'V') {
+export function rainCoef(fGHz: number, pol: 'H' | 'V') {
   const f = Math.min(100, Math.max(1, fGHz));
   let i = 1;
   while (i < RAIN.length - 1 && RAIN[i][0] < f) i++;

@@ -19,7 +19,8 @@ import { applyClutter, fetchClutterObjects } from './net/clutter';
 import { useNetState } from './net/online';
 import { buildReport } from './report/report';
 import { saveFile, openTextFile, safeFileName } from './storage/files';
-import { importBundle, makeBackup, makeProjectBundle, parseSitesCsv, sitesToCsv } from './storage/exchange';
+import { findExisting, importBundle, makeBackup, makeProjectBundle, parseBundle, parseSitesCsv, sitesToCsv, type Bundle } from './storage/exchange';
+import { isTauri } from './platform';
 import { clearTileCache } from './map/tileCache';
 
 type Modal = { kind: 'add-site'; lat?: number; lon?: number } | { kind: 'new-link'; a?: string } | { kind: 'about' } | { kind: 'cleanup' } | null;
@@ -230,6 +231,78 @@ export function App() {
     } catch (e) { fail(e); }
   };
 
+  /* ---------- project exchange between engineers ---------- */
+  const exportProject = () => {
+    if (!project) return;
+    setDialog({
+      title: 'Экспорт проекта',
+      body: <p className="hint">В файл попадут объекты, пролёты со всеми исходными данными и профилями, а также ППУ и антенны из справочника. Отправьте файл коллеге: он откроет его кнопкой «Импорт проекта», дополнит и вернёт — у вас проект обновится.</p>,
+      input: { label: 'Комментарий для коллеги (необязательно)', value: '', optional: true, multiline: true, placeholder: 'например: проверь высоты подвеса на пролёте А — Б' },
+      confirm: 'Сохранить файл',
+      onConfirm: (note) => {
+        void (async () => {
+          const b = await makeProjectBundle(store.repo, project, note || undefined);
+          const d = new Date().toISOString().slice(0, 10);
+          const w = await saveFile(`${safeFileName(project.name)} — ${d}.json`, JSON.stringify(b, null, 1), [{ name: 'Проект ОИР RRL Planner', extensions: ['json'] }]);
+          if (w) notify(w === 'download' ? 'Файл проекта сохранён в загрузки.' : `Файл проекта сохранён: ${w}`);
+        })().catch(fail);
+      }
+    });
+  };
+  const doImport = async (b: Bundle, mode: 'copy' | 'replace') => {
+    let saved = '';
+    if (mode === 'replace' && isTauri()) {
+      // Keep the local version before it is overwritten.
+      try {
+        const local = (await store.repo.listProjects()).find((p) => p.id === b.projects[0].id);
+        if (local) {
+          const { appConfigDir, join } = await import('@tauri-apps/api/path');
+          const fs = await import('@tauri-apps/plugin-fs');
+          const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+          const file = await join(await appConfigDir(), `before-import-${safeFileName(local.name)}-${stamp}.json`);
+          await fs.writeTextFile(file, JSON.stringify(await makeProjectBundle(store.repo, local), null, 1));
+          saved = file;
+        }
+      } catch (e) { console.warn('backup before import failed', e); }
+    }
+    const res = await importBundle(store.repo, b, mode);
+    await store.reloadAll();
+    if (res.projectId) await store.selectProject(res.projectId);
+    setSel(null);
+    notify(mode === 'replace'
+      ? `Проект обновлён из файла: объектов ${res.sites}, пролётов ${res.links}.${saved ? ` Прежняя версия сохранена: ${saved}` : ''}`
+      : `Импортировано: проектов ${res.projects}, объектов ${res.sites}, пролётов ${res.links}.`);
+  };
+  const importProject = async () => {
+    const f = await openTextFile([{ name: 'Проект или копия ОИР RRL Planner', extensions: ['json'] }]);
+    if (!f) return;
+    let b: Bundle;
+    try { b = parseBundle(JSON.parse(f.text)); } catch (e) { throw e instanceof SyntaxError ? new Error('Файл повреждён или это не файл проекта.') : e; }
+    const when = b.exportedAt ? new Date(b.exportedAt).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) : '';
+    const fp = b.projects[0];
+    const info = (
+      <div className="import-info">
+        <p>Файл: <b>{f.name}</b>{when ? <>, сохранён {when}</> : null}</p>
+        {b.kind === 'project' && fp ? <p>Проект «{fp.name}»: объектов {(b.sites || []).length}, пролётов {(b.links || []).length}.</p> : <p>Резервная копия: проектов {b.projects.length}.</p>}
+        {b.note ? <div className="import-note"><span>Комментарий отправителя</span>{b.note}</div> : null}
+      </div>
+    );
+    const existing = await findExisting(store.repo, b);
+    if (existing) {
+      const ls = await store.repo.listLinks(existing.id), ss = await store.repo.listSites(existing.id);
+      setDialog({
+        title: 'Этот проект у вас уже есть',
+        wide: true,
+        body: <>{info}<p>Сейчас у вас в проекте «{existing.name}»: объектов {ss.length}, пролётов {ls.length}.</p><p className="hint">«Обновить проект» заменит ваш проект версией из файла — так забирают проект, который коллега дополнил и вернул. Ваша текущая версия перед этим сохранится в папке настроек программы. «Сохранить копией» добавит файл отдельным проектом, ничего не меняя.</p></>,
+        confirm: 'Обновить проект',
+        alt: { label: 'Сохранить копией', onClick: () => { void doImport(b, 'copy').catch(fail); } },
+        onConfirm: () => { void doImport(b, 'replace').catch(fail); }
+      });
+      return;
+    }
+    setDialog({ title: 'Импорт проекта', wide: true, body: info, confirm: 'Импортировать', onConfirm: () => { void doImport(b, 'copy').catch(fail); } });
+  };
+
   const onAction = async (a: FileAction) => {
     try {
       if (a === 'about') return setModal({ kind: 'about' });
@@ -241,20 +314,10 @@ export function App() {
         if (w) notify(`Резервная копия сохранена: ${b.projects.length} проектов, ${b.links.length} пролётов.`);
         return;
       }
-      if (a === 'import') {
-        const f = await openTextFile([{ name: 'Проект или копия', extensions: ['json'] }]);
-        if (!f) return;
-        const res = await importBundle(store.repo, JSON.parse(f.text));
-        await store.reloadAll();
-        notify(`Импортировано: проектов ${res.projects}, объектов ${res.sites}, пролётов ${res.links}. Выберите проект в списке слева.`);
-        return;
-      }
+      if (a === 'import') return await importProject();
       if (!project) return;
-      if (a === 'export-project') {
-        const b = await makeProjectBundle(store.repo, project);
-        const w = await saveFile(safeFileName(project.name) + '.json', JSON.stringify(b, null, 1), [{ name: 'Проект', extensions: ['json'] }]);
-        if (w) notify('Проект сохранён в файл.');
-      } else if (a === 'export-csv') {
+      if (a === 'export-project') exportProject();
+      else if (a === 'export-csv') {
         const w = await saveFile(safeFileName(project.name) + ' — объекты.csv', sitesToCsv(sites), [{ name: 'CSV', extensions: ['csv'] }]);
         if (w) notify(`Объекты выгружены: ${sites.length}.`);
       } else if (a === 'import-csv') {
@@ -324,12 +387,14 @@ export function App() {
           onAddSiteCoords={() => setModal({ kind: 'add-site' })}
           onAddLink={() => setModal({ kind: 'new-link' })}
           onNewProject={newProject}
+          onExportProject={exportProject}
+          onImportProject={() => { importProject().catch(fail); }}
           onRenameProject={() => project && setDialog({ title: 'Переименовать проект', input: { label: 'Название проекта', value: project.name }, confirm: 'Сохранить', onConfirm: (v) => { void store.updateProject({ ...project, name: v! }); } })}
           onCleanupProjects={() => setModal({ kind: 'cleanup' })}
           onDeleteSite={async (id) => { const st = sites.find((x) => x.id === id); try { await store.deleteSite(id); if (sel?.kind === 'site' && sel.id === id) setSel(null); notify(`Объект «${st?.name ?? ''}» удалён.`); } catch (e) { fail(e); } }}
           onDeleteLink={async (id) => { const l = links.find((x) => x.id === id); const nm = l ? `${sites.find((s) => s.id === l.siteA)?.name ?? ''} — ${sites.find((s) => s.id === l.siteB)?.name ?? ''}` : ''; try { await store.deleteLink(id); if (sel?.kind === 'link' && sel.id === id) setSel(null); notify(`Пролёт «${nm}» удалён.`); } catch (e) { fail(e); } }}
           onDeleteProjectById={async (id) => { const pr = store.projects.find((x) => x.id === id); try { await store.deleteProject(id); if (id === project?.id) setSel(null); notify(`Проект «${pr?.name ?? ''}» удалён.`); } catch (e) { fail(e); } }}
-          onDeleteProject={() => project && confirmDelete('Удалить проект?', `Проект «${project.name}» удалится вместе со всеми объектами (${sites.length}) и пролётами (${links.length}). Перед удалением можно сохранить его через «Файл» → «Экспорт проекта».`, async () => { await store.deleteProject(project.id); notify('Проект удалён.'); })}
+          onDeleteProject={() => project && confirmDelete('Удалить проект?', `Проект «${project.name}» удалится вместе со всеми объектами (${sites.length}) и пролётами (${links.length}). Перед удалением его можно сохранить кнопкой «Экспорт проекта».`, async () => { await store.deleteProject(project.id); notify('Проект удалён.'); })}
           onAddRadio={() => { const r = { id: uid(), name: 'Новое ППУ', band: '', modes: [], notes: '' }; store.saveLibrary({ ...library, radios: [...library.radios, r] }); setSel({ kind: 'radio', id: r.id }); }}
           onAddAntenna={() => { const a = { id: uid(), name: 'Новая антенна', diameterM: 0.6, xpdDb: null, gains: [], notes: '' }; store.saveLibrary({ ...library, antennas: [...library.antennas, a] }); setSel({ kind: 'antenna', id: a.id }); }}
         />

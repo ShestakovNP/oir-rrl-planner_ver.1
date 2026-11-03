@@ -17,6 +17,8 @@ export interface Bundle {
   sites: Site[];
   links: Link[];
   library?: Library;
+  /** Comment of the sender for the colleague (project exchange). */
+  note?: string;
 }
 
 export async function makeBackup(repo: Repo): Promise<Bundle> {
@@ -27,9 +29,9 @@ export async function makeBackup(repo: Repo): Promise<Bundle> {
   };
 }
 
-export async function makeProjectBundle(repo: Repo, project: Project): Promise<Bundle> {
+export async function makeProjectBundle(repo: Repo, project: Project, note?: string): Promise<Bundle> {
   return {
-    format: FORMAT, version: FORMAT_VERSION, kind: 'project', exportedAt: new Date().toISOString(),
+    format: FORMAT, version: FORMAT_VERSION, kind: 'project', exportedAt: new Date().toISOString(), ...(note ? { note } : {}),
     projects: [project], sites: await repo.listSites(project.id), links: await repo.listLinks(project.id),
     library: (await repo.getLibrary()) ?? undefined
   };
@@ -49,28 +51,63 @@ function normalizeLink(l: Link): Link {
   };
 }
 
-/**
- * Imports a bundle as new records (fresh ids), so importing never overwrites
- * existing work. Library items with names not yet present are added.
- */
-export async function importBundle(repo: Repo, raw: unknown): Promise<{ projects: number; sites: number; links: number }> {
+/** Checks the file and returns it as a bundle (throws a readable error otherwise). */
+export function parseBundle(raw: unknown): Bundle {
   const b = raw as Bundle;
   if (!b || b.format !== FORMAT || !Array.isArray(b.projects)) throw new Error('Это не файл ОИР RRL Planner.');
   if (b.version > FORMAT_VERSION) throw new Error('Файл создан более новой версией программы. Обновите программу.');
+  return b;
+}
+
+/** A project of an exchange file that already exists here (sent earlier and came back). */
+export async function findExisting(repo: Repo, b: Bundle): Promise<Project | null> {
+  if (b.kind !== 'project' || b.projects.length !== 1) return null;
+  return (await repo.listProjects()).find((p) => p.id === b.projects[0].id) ?? null;
+}
+
+async function mergeLibrary(repo: Repo, b: Bundle) {
+  if (!b.library) return;
+  const lib = (await repo.getLibrary()) ?? { radios: [], antennas: [] };
+  const rn = new Set(lib.radios.map((r) => r.name)), an = new Set(lib.antennas.map((a) => a.name));
+  b.library.radios?.forEach((r) => { if (!rn.has(r.name)) lib.radios.push({ ...r, id: uid() }); });
+  b.library.antennas?.forEach((a) => { if (!an.has(a.name)) lib.antennas.push({ ...a, id: uid() }); });
+  await repo.saveLibrary(lib);
+}
+
+export interface ImportResult { projects: number; sites: number; links: number; projectId: string | null }
+
+/**
+ * Imports a bundle.
+ *  - 'copy': new records. A project that is not here yet keeps its ids, so when a colleague
+ *    sends it back it is recognised; a project that already exists gets fresh ids («(импорт)»).
+ *  - 'replace': the project with the same id is replaced by the file version (objects and links too).
+ * Library items with names not yet present are added.
+ */
+export async function importBundle(repo: Repo, raw: unknown, mode: 'copy' | 'replace' = 'copy'): Promise<ImportResult> {
+  const b = parseBundle(raw);
   const pMap = new Map<string, string>(), sMap = new Map<string, string>();
-  const existing = new Set((await repo.listProjects()).map((p) => p.name));
+  const have = await repo.listProjects();
+  const names = new Set(have.map((p) => p.name)), ids = new Set(have.map((p) => p.id));
   const now = Date.now();
+  const keep = new Set<string>();
   for (const p of b.projects) {
-    const id = uid();
+    const exists = ids.has(p.id);
+    if (mode === 'replace' && exists) {
+      for (const l of await repo.listLinks(p.id)) await repo.deleteLink(l.id);
+      for (const st of await repo.listSites(p.id)) await repo.deleteSite(st.id);
+    }
+    const sameIds = !exists || mode === 'replace';
+    const id = sameIds ? p.id : uid();
+    if (sameIds) keep.add(p.id);
     pMap.set(p.id, id);
-    const name = existing.has(p.name) ? `${p.name} (импорт)` : p.name;
+    const name = !sameIds && names.has(p.name) ? `${p.name} (импорт)` : p.name;
     await repo.saveProject({ ...p, id, name, notes: p.notes ?? '', updatedAt: now, createdAt: p.createdAt ?? now });
   }
   let sites = 0, links = 0;
   for (const s of b.sites || []) {
     const projectId = pMap.get(s.projectId);
     if (!projectId) continue;
-    const id = uid();
+    const id = keep.has(s.projectId) ? s.id : uid();
     sMap.set(s.id, id);
     await repo.saveSite({ ...s, id, projectId, code: s.code ?? '', notes: s.notes ?? '', groundM: s.groundM ?? null });
     sites++;
@@ -78,17 +115,11 @@ export async function importBundle(repo: Repo, raw: unknown): Promise<{ projects
   for (const l of b.links || []) {
     const projectId = pMap.get(l.projectId), a = sMap.get(l.siteA), bb = sMap.get(l.siteB);
     if (!projectId || !a || !bb) continue;
-    await repo.saveLink(normalizeLink({ ...l, id: uid(), projectId, siteA: a, siteB: bb }));
+    await repo.saveLink(normalizeLink({ ...l, id: keep.has(l.projectId) ? l.id : uid(), projectId, siteA: a, siteB: bb }));
     links++;
   }
-  if (b.library) {
-    const lib = (await repo.getLibrary()) ?? { radios: [], antennas: [] };
-    const rn = new Set(lib.radios.map((r) => r.name)), an = new Set(lib.antennas.map((a) => a.name));
-    b.library.radios?.forEach((r) => { if (!rn.has(r.name)) lib.radios.push({ ...r, id: uid() }); });
-    b.library.antennas?.forEach((a) => { if (!an.has(a.name)) lib.antennas.push({ ...a, id: uid() }); });
-    await repo.saveLibrary(lib);
-  }
-  return { projects: b.projects.length, sites, links };
+  await mergeLibrary(repo, b);
+  return { projects: b.projects.length, sites, links, projectId: b.projects.length ? pMap.get(b.projects[0].id) ?? null : null };
 }
 
 /* ---------------- CSV ---------------- */

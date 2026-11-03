@@ -4,6 +4,7 @@ import type { Channel, Climate, Link, ModMode, ProfilePoint, Protection, Protect
 import { SCHEME_NAMES, SCHEME_SHORT, defaultProtection } from '../data/calc/protection';
 import { channelsShareFrequency, type LinkResult } from '../data/calc/link';
 import { dishGain } from '../data/calc/physics';
+import { DEFAULT_GOST, GOST_RAIN_XI, GOST_REGIONS, gostRainRate, kOfG, regionStats } from '../data/calc/gost';
 import { fmt, ghz } from '../data/calc/format';
 import { useStore } from '../state/store';
 import { fetchTerrainProfile } from '../net/elevation';
@@ -215,6 +216,63 @@ function Inputs({ link, set }: { link: Link; set(p: Partial<Link>): void }) {
 
       <div className="section">
         <h3>Климат и норма</h3>
+        <div className="method-row">
+          <span className="method-label">Методика расчёта</span>
+          <div className="seg" role="group" aria-label="Методика расчёта">
+            <button type="button" aria-pressed={link.climate.method !== 'gost'} onClick={() => setCl({ method: 'itu' })}>МСЭ-R P.530</button>
+            <button type="button" aria-pressed={link.climate.method === 'gost'} onClick={() => setCl({ method: 'gost', gost: { ...DEFAULT_GOST, ...(link.climate.gost ?? {}) } })}>ГОСТ Р 53363-2009</button>
+          </div>
+        </div>
+        {link.climate.method === 'gost' ? (() => {
+          const g = { ...DEFAULT_GOST, ...(link.climate.gost ?? {}) };
+          const setG = (p: Partial<typeof g>) => setCl({ gost: { ...g, ...p } });
+          const reg = GOST_REGIONS.find((r) => r.id === g.region) ?? GOST_REGIONS[1];
+          const xi = (GOST_RAIN_XI[g.rainTerritory] ?? GOST_RAIN_XI[0]).xi;
+          const okXY = A && B && [A.lat, A.lon, B.lat, B.lon].every(Number.isFinite);
+          const J = okXY ? gostRainRate(xi, (A!.lat + B!.lat) / 2, (A!.lon + B!.lon) / 2) : null;
+          const st = regionStats(g, 50);
+          const n1 = (x: number, d = 1) => fmt(x, d);
+          return (
+            <>
+              <p className="hint">Расчёт по ГОСТ Р 53363-2009: рефракция по климатическому району (приложение Б), субрефракция (раздел 12), интерференционные замирания — гладкие и селективные (13), разнесённый приём (14), SESR и коэффициент неготовности (15–18), дождь с интенсивностью по координатам пролёта (16, приложение В).</p>
+              <div className="grid2">
+                <Field label="Климатический район (прил. Б)" htmlFor={id('greg')} className="span2">
+                  <select id={id('greg')} className="select" value={g.region} onChange={(e) => setG({ region: +e.target.value })}>
+                    {GOST_REGIONS.map((r) => <option key={r.id} value={r.id}>{r.id}. {r.name}</option>)}
+                  </select>
+                </Field>
+                <Field label="Сезон" htmlFor={id('gsea')}>
+                  <select id={id('gsea')} className="select" value={g.season} onChange={(e) => setG({ season: e.target.value as 'summer' | 'winter' })}>
+                    <option value="summer">Летние месяцы</option>
+                    <option value="winter" disabled={!reg.winter}>Зимние месяцы{reg.winter ? '' : ' (нет данных)'}</option>
+                  </select>
+                </Field>
+                <Field label="Тип трассы" htmlFor={id('gter')}>
+                  <select id={id('gter')} className="select" value={g.terrain} onChange={(e) => setG({ terrain: e.target.value as typeof g.terrain })}>
+                    <option value="land">Сухопутная</option>
+                    <option value="coast">Приморская (тёплые и умеренные моря)</option>
+                    <option value="arctic">Побережье арктических морей</option>
+                  </select>
+                </Field>
+                <Field label="Территория для дождя (прил. В)" htmlFor={id('gxi')} className="span2">
+                  <select id={id('gxi')} className="select" value={g.rainTerritory} onChange={(e) => setG({ rainTerritory: +e.target.value })}>
+                    {GOST_RAIN_XI.map((t, i) => <option key={i} value={i}>ξ = {String(t.xi).replace('.', ',')} — {t.name}</option>)}
+                  </select>
+                </Field>
+                <Field label="Неготовность аппаратуры, %" htmlFor={id('gka')} hint="раздел 5; 0 — не учитывать"><NumField id={id('gka')} value={g.kAppPct} min={0} max={100} onChange={(v) => setG({ kAppPct: v ?? 0 })} /></Field>
+                <Field label="Норма SESR, %" htmlFor={id('gsn')} hint="пусто — не проверять"><NumField id={id('gsn')} value={g.sesrNormPct} nullable min={0} placeholder="не задана" onChange={(v) => setG({ sesrNormPct: v })} /></Field>
+                <Field label="Затухание в газах, дБ/км" htmlFor={id('gas')} hint="пусто — по частоте"><NumField id={id('gas')} value={link.climate.gasDbPerKm} nullable placeholder="авто" onChange={(v) => setCl({ gasDbPerKm: v })} /></Field>
+                <Field label="Норма коэффициента готовности, %" htmlFor={id('av')} hint="K нг = 100 − норма"><NumField id={id('av')} value={link.climate.availabilityPct} min={90} max={100} onChange={(v) => setCl({ availabilityPct: v ?? 99.98517 })} /></Field>
+              </div>
+              <div className="gost-facts">
+                <span>ḡ = {n1(st.gMean * 1e8)}·10⁻⁸ 1/м, σ = {n1(st.sigma * 1e8)}·10⁻⁸ 1/м</span>
+                <span>k при ḡ: {fmt(kOfG(st.gMean), 2)}</span>
+                <span>Интенсивность дождя J: {J != null ? n1(J) + ' мм/ч' : '—'}</span>
+              </div>
+              <p className="hint">Не реализованы: слабопересечённые (равнинные) трассы и трассы над водой по разделу 13.2 — для них расчёт идёт как для пересечённых; надёжность аппаратуры раздела 5 вводится готовым значением.</p>
+            </>
+          );
+        })() : (
         <div className="grid2">
           <Field label="Рефракция k, обычная" htmlFor={id('k')}><NumField id={id('k')} value={link.climate.k} min={0.3} max={5} onChange={(v) => setCl({ k: v ?? 1.33 })} /></Field>
           <Field label="k в плохую погоду" htmlFor={id('km')} hint="субрефракция"><NumField id={id('km')} value={link.climate.kMin} min={0.3} max={5} onChange={(v) => setCl({ kMin: v ?? 0.67 })} /></Field>
@@ -224,6 +282,26 @@ function Inputs({ link, set }: { link: Link; set(p: Partial<Link>): void }) {
           <Field label="Пересчёт месяц → год" htmlFor={id('qy')}><NumField id={id('qy')} value={link.climate.monthToYear} min={0} max={1} onChange={(v) => setCl({ monthToYear: v ?? 0.25 })} /></Field>
           <Field label="Норма доступности, %" htmlFor={id('av')} hint="например, 99,98517" className="span2"><NumField id={id('av')} value={link.climate.availabilityPct} min={90} max={100} onChange={(v) => setCl({ availabilityPct: v ?? 99.98517 })} /></Field>
         </div>
+        )}
+        {link.climate.method !== 'gost' && link.channels.some((c, i) => (i === 0 || c.enabled) && c.freqMHz >= 57000) ? (() => {
+          const er = link.climate.eRain ?? { on: false, pdPct: 2, asrDb: 5, daDb2: 50 };
+          const setEr = (p: Partial<typeof er>) => setCl({ eRain: { ...er, ...p } });
+          const bad = er.on && er.daDb2 < er.asrDb * er.asrDb;
+          return (
+            <div className="chan" style={{ marginTop: 10 }}>
+              <label className="check"><input type="checkbox" checked={er.on} onChange={(e) => setEr({ on: e.target.checked })} /> Дождь для E-band по местной статистике (метод моментов)</label>
+              <p className="hint">Для диапазона 60–90 ГГц расчёт по МСЭ-R P.530 часто слишком оптимистичен. Метод моментов (Степанец И.В., СПбГУТ, 2024) строит распределение дождевых замираний по статистике вашего района: доля времени с дождём, среднее ослабление в дожде и его дисперсия. Данные берут из наблюдений на действующих пролётах или метеостатистики; без них оставьте выключенным.</p>
+              {er.on ? (
+                <div className="grid3">
+                  <Field label="Вероятность дождя Pd, %" htmlFor={id('pd')}><NumField id={id('pd')} value={er.pdPct} min={0.001} max={100} onChange={(v) => setEr({ pdPct: v ?? 2 })} /></Field>
+                  <Field label="Среднее ослабление в дожде, дБ" htmlFor={id('asr')}><NumField id={id('asr')} value={er.asrDb} min={0.01} onChange={(v) => setEr({ asrDb: v ?? 5 })} /></Field>
+                  <Field label="Дисперсия ослабления, дБ²" htmlFor={id('da')}><NumField id={id('da')} value={er.daDb2} min={0.01} onChange={(v) => setEr({ daDb2: v ?? 50 })} /></Field>
+                </div>
+              ) : null}
+              {bad ? <div className="notice">Дисперсия должна быть не меньше квадрата среднего ослабления ({String(+(er.asrDb * er.asrDb).toFixed(1)).replace('.', ',')} дБ²) — иначе распределение не строится, расчёт идёт по МСЭ-R.</div> : null}
+            </div>
+          );
+        })() : null}
       </div>
 
       <div className="section">

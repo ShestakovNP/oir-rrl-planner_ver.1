@@ -23,6 +23,8 @@ interface Props {
   onAddSiteCoords(): void;
   onAddLink(): void;
   onNewProject(): void;
+  onExportProject(): void;
+  onImportProject(): void;
   onRenameProject(): void;
   onDeleteProject(): void;
   onCleanupProjects(): void;
@@ -64,6 +66,10 @@ export function Sidebar(p: Props) {
               </div>
             ) : null}
           </div>
+        </div>
+        <div className="exchange-row">
+          <button type="button" className="btn sm has-tip" data-tip="Сохранить проект в файл, чтобы отправить коллеге" disabled={!project} onClick={p.onExportProject}><Icon name="download" />Экспорт проекта</button>
+          <button type="button" className="btn sm has-tip" data-tip="Открыть проект из файла, в том числе вернувшийся от коллеги" onClick={p.onImportProject}><Icon name="upload" />Импорт проекта</button>
         </div>
       </div>
       <div className="tabs" role="tablist">

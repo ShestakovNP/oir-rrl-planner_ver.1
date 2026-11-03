@@ -6,7 +6,7 @@ import { setHover, useHover } from '../state/hover';
 import { downtime, fmt, ghz, pct, polLong } from '../data/calc/format';
 import { n360 } from '../data/calc/geo';
 import { Icon, Rich } from './ui';
-import { interferenceRows, protectionRows } from '../data/calc/protectionText';
+import { gostRows, interferenceRows, protectionRows } from '../data/calc/protectionText';
 import { exportChart, type LegendItem } from './chartExport';
 
 export function Verdict({ r }: { r: LinkResult }) {
@@ -27,6 +27,7 @@ export function Verdict({ r }: { r: LinkResult }) {
         ) : (
           <div className="fact"><span className="k">Запас{c?.ref ? ' ' + c.ref.name : ''}</span><span className="v">{c?.ref ? fmt(c.ref.margin, 1) : '—'}</span><span className="s">дБ</span></div>
         )}
+        <div className="fact" title="Средняя скорость при адаптивной модуляции: каждый режим берётся с долей времени, когда он самый быстрый из работающих (Степанец И.В., 2024, формула 2.2)"><span className="k">Средняя скорость с ACM</span><span className="v">{fmt(r.avgRate, 1)}</span><span className="s">Мбит/с{r.multi ? ', сумма стволов' : ''}</span></div>
       </div>
     </>
   );
@@ -408,6 +409,7 @@ export function Steps({ r, link }: { r: LinkResult; link: Link }) {
       {row('Высоты антенн над уровнем моря', 'земля + подвес', `${fmt(r.path.HA, 0)} / ${fmt(r.path.HB, 0)} м`, 'h')}
       {row('Угол места A / B', `при k = ${fmt(r.k, 2)}`, `${fmt(r.tiltA, 2)}° / ${fmt(r.tiltB, 2)}°`, 't')}
       {row('Потери в фидерах и прочие', 'общие для стволов', fmt(link.feederA + link.feederB + link.otherLoss, 1) + ' дБ', 'f')}
+      {row('Методика', '', r.method === 'gost' ? 'ГОСТ Р 53363-2009' : 'МСЭ-R P.530', 'meth')}
       {row('Допустимая неготовность', 'в год', `${pct(r.uNorm)} · ${downtime(r.uNorm)}`, 'u')}
       {r.channels.map((c) => [
         <div key={'s' + c.n} className="sec">{r.multi ? `Ствол ${c.n} · ` : ''}{c.label}</div>,
@@ -424,8 +426,11 @@ export function Steps({ r, link }: { r: LinkResult; link: Link }) {
         ...(c.ref ? row(`Сигнал на приёмнике, ${c.ref.name}`, `мощность ${fmt(c.ref.txDbm, 1)} дБм + антенны − потери${c.refl && c.refl.applied > 0 ? ' − отражение' : ''}`, fmt(c.ref.prx, 1) + ' дБм', c.n + 'p') : []),
         ...protectionRows(r, c).flatMap((x, i) => row(x.t, x.s, x.v, c.n + 'pr' + i)),
         ...interferenceRows(r, c).flatMap((x, i) => row(x.t, x.s, x.v, c.n + 'if' + i)),
+        ...gostRows(r, c).flatMap((x, i) => row(x.t, x.s, x.v, c.n + 'go' + i)),
         ...row('Запас, нужный для нормы', '', fmt(c.marginRequired, 1) + ' дБ', c.n + 'mr'),
-        ...row('Дождь: ослабление в ливень', `${fmt(r.climate.rainR001, 0)} мм/ч, ${fmt(c.rain.gamma, 3)} дБ/км`, fmt(c.rain.A001, 1) + ' дБ', c.n + 'rain')
+        ...row('Средняя скорость с ACM', 'Cср = Σ Cᵢ·(Pн.ᵢ₊₁ − Pн.ᵢ), Степанец И.В., 2024', fmt(c.avgRate, 1) + ' Мбит/с', c.n + 'acm'),
+        ...(c.rainMoments ? row('Дождь по методу моментов', `статистика: Pd ${fmt(r.climate.eRain!.pdPct, 2)} %, Aср ${fmt(r.climate.eRain!.asrDb, 1)} дБ, DA ${fmt(r.climate.eRain!.daDb2, 1)} дБ²; α ${fmt(c.rainMoments.alpha, 4)}, β ${fmt(c.rainMoments.beta, 3)}, δ ${fmt(c.rainMoments.delta, 3)}`, `${fmt(c.rainMoments.pFor(c.ref ? c.ref.margin : 0), 4)} % при запасе`, c.n + 'mom') : []),
+        ...(c.gost ? [] : row('Дождь: ослабление в ливень', `${fmt(r.climate.rainR001, 0)} мм/ч, ${fmt(c.rain.gamma, 3)} дБ/км`, fmt(c.rain.A001, 1) + ' дБ', c.n + 'rain'))
       ])}
     </div>
   );
