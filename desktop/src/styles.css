@@ -81,6 +81,8 @@ h1, h2, h3, h4 { margin: 0; text-wrap: balance; }
 .has-tip { position: relative; }
 .has-tip::after { content: attr(data-tip); position: absolute; top: calc(100% + 8px); right: 0; background: var(--ink); color: var(--panel); font-size: 12px; font-weight: 600; padding: 6px 10px; border-radius: 6px; white-space: nowrap; box-shadow: var(--shadow); opacity: 0; transform: translateY(-3px); transition: opacity .12s, transform .12s; pointer-events: none; z-index: 1400; }
 .has-tip::before { content: ""; position: absolute; top: calc(100% + 3px); right: 10px; border: 5px solid transparent; border-bottom-color: var(--ink); border-top: 0; opacity: 0; transition: opacity .12s; pointer-events: none; z-index: 1400; }
+/* A hovered button can get its own stacking context (filter on .btn.primary:hover), so lift the whole button. */
+.has-tip:hover, .has-tip:focus-visible { z-index: 1400; }
 .has-tip:hover::after, .has-tip:focus-visible::after { opacity: 1; transform: none; }
 .has-tip:hover::before, .has-tip:focus-visible::before { opacity: 1; }
 .icon { width: 16px; height: 16px; flex: none; }
