@@ -36,7 +36,9 @@ interface Props {
 }
 
 export function Sidebar(p: Props) {
-  const { projects, project, sites, links, results, library } = useStore();
+  const { projects, project, sites, links, results, library, saveLibrary } = useStore();
+  const delRadio = (id: string) => { saveLibrary({ ...library, radios: library.radios.filter((x) => x.id !== id) }); if (p.selection?.kind === 'radio' && p.selection.id === id) p.select(null); };
+  const delAntenna = (id: string) => { saveLibrary({ ...library, antennas: library.antennas.filter((x) => x.id !== id) }); if (p.selection?.kind === 'antenna' && p.selection.id === id) p.select(null); };
   const [q, setQ] = useState('');
   const [menu, setMenu] = useState<'project' | 'site' | null>(null);
   const [askDel, setAskDel] = useState<string | null>(null);
@@ -155,25 +157,49 @@ export function Sidebar(p: Props) {
               <div><span className="sub">ППУ</span><div className="hint" style={{ fontSize: 11.5 }}>приёмо-передающие устройства</div></div>
               <button type="button" className="btn sm" onClick={p.onAddRadio}><Icon name="plus" />Добавить</button>
             </div>
-            {library.radios.map((r) => (
-              <button key={r.id} type="button" className="item" aria-current={p.selection?.kind === 'radio' && p.selection.id === r.id} onClick={() => p.select({ kind: 'radio', id: r.id })}>
-                <Icon name="radio" />
-                <span className="t">{r.name || 'Без названия'}</span>
-                <span className="r">{r.band}</span>
-                <span className="s">{r.modes.map((m) => m.name).join(', ') || 'нет режимов'}</span>
-              </button>
+            {library.radios.length ? null : <div className="empty small"><span>Справочник ППУ пуст. Нажмите «Добавить» и внесите данные из паспорта или сохраните ППУ из проекта коллеги.</span></div>}
+            {library.radios.map((r) => askDel === r.id ? (
+              <div key={r.id} className="item-ask" role="alert">
+                <div>Удалить ППУ «{r.name || 'Без названия'}» из справочника?<small> Уже настроенные пролёты не изменятся.</small></div>
+                <div className="item-ask-btns">
+                  <button type="button" className="btn sm danger-fill" autoFocus onClick={() => { setAskDel(null); delRadio(r.id); }}>Удалить</button>
+                  <button type="button" className="btn sm" onClick={() => setAskDel(null)}>Нет</button>
+                </div>
+              </div>
+            ) : (
+              <div key={r.id} className="item-wrap">
+                <button type="button" className="item" aria-current={p.selection?.kind === 'radio' && p.selection.id === r.id} onClick={() => p.select({ kind: 'radio', id: r.id })}>
+                  <Icon name="radio" />
+                  <span className="t">{r.name || 'Без названия'}</span>
+                  <span className="r">{r.band}</span>
+                  <span className="s">{r.modes.map((m) => m.name).join(', ') || 'нет типов модуляции'}</span>
+                </button>
+                <button type="button" className="item-del" title="Удалить ППУ" aria-label={`Удалить ППУ ${r.name}`} onClick={() => setAskDel(r.id)}><Icon name="trash" /></button>
+              </div>
             ))}
             <div className="list-tools" style={{ padding: '16px 6px 4px', justifyContent: 'space-between', alignItems: 'center' }}>
               <span className="sub">Антенны</span>
               <button type="button" className="btn sm" onClick={p.onAddAntenna}><Icon name="plus" />Добавить</button>
             </div>
-            {library.antennas.map((a) => (
-              <button key={a.id} type="button" className="item" aria-current={p.selection?.kind === 'antenna' && p.selection.id === a.id} onClick={() => p.select({ kind: 'antenna', id: a.id })}>
+            {library.antennas.length ? null : <div className="empty small"><span>Антенн нет. Нажмите «Добавить».</span></div>}
+            {library.antennas.map((a) => askDel === a.id ? (
+              <div key={a.id} className="item-ask" role="alert">
+                <div>Удалить антенну «{a.name || 'Без названия'}» из справочника?<small> Уже настроенные пролёты не изменятся.</small></div>
+                <div className="item-ask-btns">
+                  <button type="button" className="btn sm danger-fill" autoFocus onClick={() => { setAskDel(null); delAntenna(a.id); }}>Удалить</button>
+                  <button type="button" className="btn sm" onClick={() => setAskDel(null)}>Нет</button>
+                </div>
+              </div>
+            ) : (
+              <div key={a.id} className="item-wrap">
+              <button type="button" className="item" aria-current={p.selection?.kind === 'antenna' && p.selection.id === a.id} onClick={() => p.select({ kind: 'antenna', id: a.id })}>
                 <Icon name="dish" />
                 <span className="t">{a.name || 'Без названия'}</span>
                 <span className="r">{(() => { const u = findUnit(LENGTH_UNITS, a.diameterUnit); return `${+u.fromBase(a.diameterM).toFixed(3)} ${u.label}`.replace('.', ','); })()}</span>
                 <span className="s">{a.gains.length ? `КУ: ${a.gains.map((g) => { const gu = findUnit(GAIN_UNITS, g.gainUnit), fu = findUnit(FREQ_UNITS, g.freqUnit); return `${fmt(gu.fromBase(g.gainDbi), 1)} ${gu.label} на ${+fu.fromBase(g.freqGHz).toFixed(3)} ${fu.label}`.replace(/(\d)\.(\d)/g, '$1,$2'); }).join(', ')}` : 'КУ рассчитывается из диаметра'}</span>
               </button>
+              <button type="button" className="item-del" title="Удалить антенну" aria-label={`Удалить антенну ${a.name}`} onClick={() => setAskDel(a.id)}><Icon name="trash" /></button>
+              </div>
             ))}
           </>
         )}

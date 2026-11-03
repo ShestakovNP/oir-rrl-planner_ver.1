@@ -17,6 +17,7 @@ export function ModesEditor({ idBase, modes, onChange }: { idBase: string; modes
   };
   return (
     <>
+      <p className="hint mod-hint"><Icon name="info" />Тип модуляции выбирается из списка — щёлкните по полю в первом столбце: QPSK, QAM16, QAM64 или QAM256. Скорость, мощность и порог внесите из паспорта ППУ.</p>
       <div className="tbl-wrap">
         <table className="tbl edit">
           <thead><tr><th>Тип модуляции</th><th className="n">Мбит/с</th><th className="n">Мощность, дБм</th><th className="n">Порог, дБм</th><th /></tr></thead>
@@ -24,7 +25,7 @@ export function ModesEditor({ idBase, modes, onChange }: { idBase: string; modes
             {modes.map((m, k) => (
               <tr key={k}>
                 <td>
-                  <select id={`${idBase}-mn${k}`} className="select" value={m.name} onChange={(e) => setMode(k, { name: e.target.value })} aria-label="Тип модуляции">
+                  <select id={`${idBase}-mn${k}`} data-tip="Выберите тип модуляции из списка" className="select" value={m.name} onChange={(e) => setMode(k, { name: e.target.value })} aria-label="Тип модуляции">
                     {MOD_TYPES.includes(m.name) ? null : <option value={m.name}>{m.name}</option>}
                     {MOD_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                   </select>
