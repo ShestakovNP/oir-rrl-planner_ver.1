@@ -1,7 +1,7 @@
 /** Update check helpers and rows not yet filled in from the datasheet. Run: npm test */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildOfTag, pickAsset } from '../src/net/updateAssets';
+import { buildOfTag, buildOfVersion, pickAsset } from '../src/net/updateAssets';
 import { calculateLink } from '../src/data/calc/link';
 import { sampleProject } from '../src/data/samples';
 import { defaultLibrary } from '../src/data/samples';
@@ -9,6 +9,8 @@ import { defaultLibrary } from '../src/data/samples';
 test('обновление: номер сборки из тега и установщик для системы', () => {
   assert.equal(buildOfTag('build-57'), 57);
   assert.equal(buildOfTag('v1.0.0'), 0);
+  assert.equal(buildOfVersion('1.0.12'), 12);
+  assert.equal(buildOfVersion('1.0.0'), 0);
   const assets = [
     { name: 'ОИР RRL Planner_1.0.0_universal.dmg', browser_download_url: 'https://x/mac.dmg' },
     { name: 'ОИР RRL Planner_1.0.0_x64_en-US.msi', browser_download_url: 'https://x/win.msi' },
