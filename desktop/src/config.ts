@@ -4,7 +4,9 @@ export const APP_NAME = 'ОИР RRL Planner';
 export const APP_SHORT = 'RRL Planner';
 export const ORG_SHORT = 'ОИР';
 export const ORG_FULL = 'Отдел инфраструктурных решений';
-export const APP_VERSION = '1.0.0';
+declare const __APP_VERSION__: string;
+/** From package.json (set to 1.0.<build number> by the build workflow). */
+export const APP_VERSION: string = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '1.0.0';
 
 declare const __BUILD_ID__: string;
 /** Unique id of this build (set by vite.config.ts). */

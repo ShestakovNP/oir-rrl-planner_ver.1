@@ -453,3 +453,9 @@ table.tbl { border-collapse: collapse; width: 100%; font-size: 12.5px; }
 .tbl.edit td:first-child .select { min-width: 108px; }
 .mod-hint { display: flex; gap: 6px; align-items: flex-start; margin: 4px 0 6px; } .mod-hint .icon { margin-top: 1px; color: var(--accent); }
 .empty.small { padding: 6px 8px 10px; text-align: left; } .empty.small span { font-size: 12px; }
+
+.upd-progress { position: fixed; right: 16px; bottom: 16px; z-index: 2500; width: 300px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.upd-bar { height: 6px; background: var(--sunk); border-radius: 3px; overflow: hidden; }
+.upd-bar span { display: block; height: 100%; background: var(--accent); transition: width .2s; }
+.upd-bar span.indef { animation: updIndef 1.2s ease-in-out infinite; }
+@keyframes updIndef { 0% { margin-left: -30%; } 100% { margin-left: 100%; } }

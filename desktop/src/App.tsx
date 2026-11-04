@@ -22,7 +22,7 @@ import { buildReport } from './report/report';
 import { saveFile, openTextFile, safeFileName } from './storage/files';
 import { findExisting, importBundle, newLibraryItems, makeBackup, makeProjectBundle, parseBundle, parseSitesCsv, sitesToCsv, type Bundle } from './storage/exchange';
 import { isTauri } from './platform';
-import { checkUpdate, type UpdateInfo } from './net/update';
+import { checkUpdate, installNative, type UpdateInfo } from './net/update';
 import { BUILD_NUMBER } from './config';
 import { openExternal } from './net/external';
 import { clearTileCache } from './map/tileCache';
@@ -237,6 +237,7 @@ export function App() {
 
   /* ---------- application update (latest GitHub release) ---------- */
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  const [updProgress, setUpdProgress] = useState<number | null | undefined>(undefined);
   useEffect(() => {
     // One quiet check a few seconds after start; errors (no network) are ignored here.
     if (!isTauri()) return;
@@ -257,13 +258,29 @@ export function App() {
       body: (
         <div className="import-info">
           <p>На GitHub опубликована <b>сборка №{u.number}</b>{date ? <> от {date}</> : null}. У вас {BUILD_NUMBER ? <>сборка №{BUILD_NUMBER}</> : 'сборка без номера'}.</p>
-          {u.assetName ? <p>Будет скачан установщик <b>{u.assetName}</b>. После загрузки закройте программу и запустите его — новая версия установится поверх текущей.</p>
+          {u.native ? <p>Программа сама скачает новую версию, проверит её подпись, установит и перезапустится. Это займёт около минуты.</p>
+            : u.assetName ? <p>Будет скачан установщик <b>{u.assetName}</b>. После загрузки закройте программу и запустите его — новая версия установится поверх текущей.</p>
             : <p>Установщик для вашей системы в выпуске не найден — откроется страница выпуска на GitHub.</p>}
           <p className="hint">Пока идёт тестирование, новая сборка при первом запуске очищает список проектов. Перед установкой сохраните нужные проекты кнопкой «Экспорт проекта».</p>
         </div>
       ),
-      confirm: u.assetName ? 'Скачать установщик' : 'Открыть страницу выпуска',
-      onConfirm: () => { void openExternal(u.assetUrl ?? u.pageUrl).then(() => notify('Загрузка установщика началась в браузере.')).catch(fail); }
+      confirm: u.native ? 'Установить и перезапустить' : u.assetName ? 'Скачать установщик' : 'Открыть страницу выпуска',
+      onConfirm: () => {
+        if (u.native) {
+          setUpdProgress(null);
+          void installNative(u.native, (p) => setUpdProgress(p)).catch((e) => {
+            setUpdProgress(undefined);
+            setDialog({
+              title: 'Не удалось установить обновление',
+              body: <p>{(e as Error)?.message || String(e)}. Можно скачать установщик вручную со страницы выпуска.</p>,
+              confirm: 'Открыть страницу выпуска',
+              onConfirm: () => { void openExternal(u.pageUrl).catch(fail); }
+            });
+          });
+          return;
+        }
+        void openExternal(u.assetUrl ?? u.pageUrl).then(() => notify('Загрузка установщика началась в браузере.')).catch(fail);
+      }
     });
   };
 
@@ -510,6 +527,13 @@ export function App() {
       {modal?.kind === 'cleanup' ? <ProjectsCleanupDialog onClose={() => setModal(null)} onDeleteOne={async (id) => { const pr = store.projects.find((x) => x.id === id); try { await store.deleteProject(id); notify(`Проект «${pr?.name ?? ''}» удалён.`); } catch (e) { fail(e); } }} onDelete={async (ids) => { try { await store.deleteProjects(ids); setSel(null); notify(`Удалено проектов: ${ids.length}.`); } catch (e) { fail(e); } }} /> : null}
       <Toasts items={toasts} />
       <TooltipLayer />
+      {updProgress !== undefined ? (
+        <div className="upd-progress" role="status">
+          <b>Устанавливаю обновление…</b>
+          <div className="upd-bar"><span style={{ width: updProgress == null ? '30%' : `${Math.round(updProgress * 100)}%` }} className={updProgress == null ? 'indef' : ''} /></div>
+          <small>{updProgress == null ? 'Загрузка' : updProgress >= 1 ? 'Установка, программа перезапустится' : `Загрузка ${Math.round(updProgress * 100)} %`}</small>
+        </div>
+      ) : null}
     </div>
   );
 }
