@@ -17,3 +17,6 @@ export function pickAsset(assets: GhAsset[], os: 'mac' | 'win' | 'other'): GhAss
   return null;
 }
 
+
+/** 1.0.12 → 12 (the workflow sets the version to 1.0.<build number>). */
+export const buildOfVersion = (v: string) => { const m = v.match(/^\d+\.\d+\.(\d+)$/); return m ? Number(m[1]) : 0; };
