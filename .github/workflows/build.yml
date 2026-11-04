@@ -1,14 +1,21 @@
 # Builds the macOS (.dmg, universal Intel + Apple Silicon) and Windows (.msi + .exe)
-# installers on GitHub's machines. Run it from the "Actions" tab ("Run workflow")
-# or by pushing a tag like v1.0.0. Installers appear under the run's "Artifacts" and, when
-# both systems built, in a GitHub Release "build-<run number>" marked as latest: the app's
-# «Обновить приложение» looks there for a newer build.
+# installers on GitHub's machines. Run it from the "Actions" tab ("Run workflow").
+#
+# Every run is a numbered build: the app version becomes 1.0.<run number>, the installers and
+# the signed update files (.sig, latest.json) go to the GitHub Release "build-<run number>",
+# which is published as the latest one when both systems built. The app's «Обновить приложение»
+# installs it from there and checks the signature with the public key in tauri.conf.json.
+#
+# Needs two repository secrets (Settings → Secrets and variables → Actions):
+#   TAURI_SIGNING_PRIVATE_KEY           — contents of the private key file
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  — its password
 name: Build installers
 
 on:
   workflow_dispatch:
-  push:
-    tags: ['v*']
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -39,17 +46,30 @@ jobs:
         with:
           workspaces: desktop/src-tauri -> target
 
+      - name: Version 1.0.${{ github.run_number }}
+        run: npm pkg set version=1.0.${{ github.run_number }}
+
       - name: Install dependencies
         run: npm install
 
       - name: Calculation tests
         run: npm test
 
-      - name: Build app
+      - name: Build app and upload to the release draft
         uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: desktop
           args: ${{ matrix.args }}
+          tagName: build-${{ github.run_number }}
+          releaseName: Сборка №${{ github.run_number }}
+          releaseBody: 'Установщики ОИР RRL Planner: .dmg — macOS, .exe или .msi — Windows. Установленная программа обновляется сама: меню с луной → «Обновить приложение».'
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true
 
       - name: Upload installers
         uses: actions/upload-artifact@v4
@@ -64,23 +84,10 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-
-      - name: Publish release for the in-app update
+      - name: Publish the release as the latest one
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mapfile -t files < <(find dist -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \))
-          printf '%s\n' "${files[@]}"
-          gh release create "build-${{ github.run_number }}" "${files[@]}" \
-            --repo "${{ github.repository }}" \
-            --target "${{ github.sha }}" \
-            --title "Сборка №${{ github.run_number }}" \
-            --notes "Установщики ОИР RRL Planner: .dmg — macOS, .exe или .msi — Windows. Программа находит этот выпуск через «Обновить приложение»." \
-            --latest
+          gh release edit "build-${{ github.run_number }}" --repo "${{ github.repository }}" --draft=false --latest
+          gh release view "build-${{ github.run_number }}" --repo "${{ github.repository }}" --json assets --jq '.assets[].name'
