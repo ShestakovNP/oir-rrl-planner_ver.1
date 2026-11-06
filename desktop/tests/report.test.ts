@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { buildReport } from '../src/report/report';
 import { calculateLink } from '../src/data/calc/link';
-import { sampleProject } from '../src/data/samples';
+import { sampleProject } from './fixtures';
 
 const s = sampleProject();
 const items = s.links.map((link) => ({ link, result: calculateLink(link, s.sites.find((x) => x.id === link.siteA)!, s.sites.find((x) => x.id === link.siteB)!) }));

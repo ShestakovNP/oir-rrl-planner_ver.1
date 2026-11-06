@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { calculateLink } from '../src/data/calc/link';
 import { f699 } from '../src/data/calc/interference';
-import { MODES_6G, baseLink } from '../src/data/samples';
+import { baseLink } from '../src/data/samples';
+import { MODES_6G } from './fixtures';
 import type { Link, Site } from '../src/data/types';
 
 const site = (id: string, lat: number, lon: number): Site => ({ id, projectId: 'p', name: id, code: '', lat, lon, groundM: 150, notes: '' });

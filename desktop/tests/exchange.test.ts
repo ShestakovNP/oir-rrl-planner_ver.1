@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openRepo } from '../src/storage/repo';
 import { findExisting, importBundle, makeProjectBundle, parseBundle } from '../src/storage/exchange';
-import { sampleProject } from '../src/data/samples';
+import { sampleProject } from './fixtures';
 
 test('обмен проектом: туда и обратно с обновлением', async () => {
   const me = await openRepo(), colleague = await openRepo();

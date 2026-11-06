@@ -5,7 +5,7 @@ import {
   G_CRIT, diversity, gostRain, gostRainRate, kOfG, levelsOf, multipath, normalTail, regionStats, selectiveMargin, subrefraction
 } from '../src/data/calc/gost';
 import { calculateLink } from '../src/data/calc/link';
-import { sampleProject } from '../src/data/samples';
+import { sampleProject } from './fixtures';
 
 const near = (a: number, b: number, tol: number, msg: string) => assert.ok(Math.abs(a - b) <= tol, `${msg}: ${a} vs ${b} (±${tol})`);
 

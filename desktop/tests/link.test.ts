@@ -1,12 +1,12 @@
 /**
  * Reference checks of the calculation core against the two links verified
- * with DRRL. Run: npm test
+ * with эталонного расчёта. Run: npm test
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { calculateLink } from '../src/data/calc/link';
 import { parseCoord, vincenty } from '../src/data/calc/geo';
-import { sampleProject } from '../src/data/samples';
+import { sampleProject } from './fixtures';
 import { minutesPerYear } from '../src/data/calc/format';
 
 const near = (a: number, b: number, tol: number, msg: string) => assert.ok(Math.abs(a - b) <= tol, `${msg}: ${a} vs ${b} (±${tol})`);
@@ -18,7 +18,7 @@ test('coordinates: DMS parsing', () => {
   assert.ok(Number.isNaN(parseCoord('')));
 });
 
-test('geodesy: Мельниково — Шегарка matches DRRL (1.782 km, 16.94° / 196.95°)', () => {
+test('geodesy: пролёт №2 matches эталонного расчёта (1.782 km, 16.94° / 196.95°)', () => {
   const g = vincenty(parseCoord(`56°32'55.06"`), parseCoord(`84°04'12.92"`), parseCoord(`56°33'50.19"`), parseCoord(`84°04'43.34"`));
   near(g.km, 1.782, 0.002, 'distance');
   near(g.az1, 16.94, 0.02, 'azimuth A→B');
@@ -34,19 +34,19 @@ test('E-band link: level, margin, tilt and availability', () => {
   assert.equal(r.ok, true);
   const c = r.channels[0];
   const m = c.modes[0];
-  near(m.prx, -31.4, 0.3, 'received level (DRRL −31.4 dBm)');
-  near(m.margin, 19.1, 0.3, 'fade margin (DRRL 19.1 dB)');
-  near(r.tiltA, -0.48, 0.02, 'elevation angle at Мельниково');
-  near(r.tiltB, 0.48, 0.02, 'elevation angle at Шегарка');
+  near(m.prx, -31.4, 0.3, 'received level (эталонного расчёта −31.4 dBm)');
+  near(m.margin, 19.1, 0.3, 'fade margin (эталонного расчёта 19.1 dB)');
+  near(r.tiltA, -0.48, 0.02, 'elevation angle at объекте №3');
+  near(r.tiltB, 0.48, 0.02, 'elevation angle at объекте №4');
   assert.equal(r.clearance.level, 'ok');
   assert.ok(m.ok, 'meets 0.0125 % objective');
   const minutes = minutesPerYear(m.u);
-  assert.ok(minutes > 30 && minutes < 66, `downtime ${minutes} min/year within the DRRL ballpark and below the 66 min objective`);
+  assert.ok(minutes > 30 && minutes < 66, `downtime ${minutes} min/year within the эталонного расчёта ballpark and below the 66 min objective`);
   const pol = r.polarization.channels[0];
   assert.equal(pol.winner, 'V', 'vertical polarization is more stable in E-band rain');
 });
 
-test('Скумбрия: QAM16 guaranteed on 6 GHz as in DRRL, two channels evaluated', () => {
+test('Пролёт №1: QAM16 guaranteed on 6 GHz as in эталонного расчёта, two channels evaluated', () => {
   const l = sample.links[0];
   const r = calculateLink(l, site(l.siteA), site(l.siteB));
   assert.equal(r.ok, true);

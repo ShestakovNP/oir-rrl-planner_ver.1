@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { calculateLink } from '../src/data/calc/link';
 import { defaultProtection, fdImprovement, sdImprovement } from '../src/data/calc/protection';
-import { MODES_6G, baseLink } from '../src/data/samples';
+import { baseLink } from '../src/data/samples';
+import { MODES_6G } from './fixtures';
 import type { Site } from '../src/data/types';
 
 /** A 50 km flat 6 GHz hop: long enough for multipath to matter. */

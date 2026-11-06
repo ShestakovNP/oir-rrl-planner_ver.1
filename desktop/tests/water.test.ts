@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { calculateLink } from '../src/data/calc/link';
 import { fresnelWater } from '../src/data/calc/water';
-import { MODES_6G, baseLink } from '../src/data/samples';
+import { baseLink } from '../src/data/samples';
+import { MODES_6G } from './fixtures';
 import type { Site } from '../src/data/types';
 
 const A: Site = { id: 'a', projectId: 'p', name: 'A', code: '', lat: 56.0, lon: 84.0, groundM: 100, notes: '' };
