@@ -4,6 +4,9 @@ export const APP_NAME = 'ОИР RRL Planner';
 export const APP_SHORT = 'RRL Planner';
 export const ORG_SHORT = 'ОИР';
 export const ORG_FULL = 'Отдел инфраструктурных решений';
+/** Shown in «О программе и данных» and in the manual. */
+export const COMPANY = 'АО «НПФ «Микран»';
+export const TEAM_LEAD = 'Шестаков Николай Петрович';
 declare const __APP_VERSION__: string;
 /** From package.json (set to 1.0.<build number> by the build workflow). */
 export const APP_VERSION: string = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '1.0.0';
@@ -19,12 +22,15 @@ export const BUILD_NUMBER: number = typeof __BUILD_NUM__ === 'string' ? Number(_
  * public GitHub API for the latest release; nothing else is sent and no account is needed.
  */
 export const UPDATE_REPO = 'ShestakovNP/oir-rrl-planner_ver.1';
+declare const __RELEASE_NOTES__: string;
+/** «Что нового» of this build (RELEASE_NOTES.md, a list of «- » lines). */
+export const RELEASE_NOTES: string = typeof __RELEASE_NOTES__ === 'string' ? __RELEASE_NOTES__ : '';
 /**
  * Test phase: every new build starts with an empty project list. Projects of the previous build
  * are saved to a backup JSON next to the database first. The equipment library is kept.
  * Set to false before handing the program out for real work — then updates keep the projects.
  */
-export const RESET_PROJECTS_ON_NEW_BUILD = true;
+export const RESET_PROJECTS_ON_NEW_BUILD = false;
 
 /** Sent with every request: OSM, Nominatim and OpenTopoData policies ask apps to identify themselves. */
 export const USER_AGENT = `OIR-RRL-Planner/${APP_VERSION} (desktop; infrastructure planning tool)`;

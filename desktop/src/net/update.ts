@@ -14,6 +14,7 @@ import { httpGet } from './http';
 export interface NativeUpdate {
   version: string;
   date?: string;
+  body?: string;
   downloadAndInstall(onEvent?: (e: { event: 'Started' | 'Progress' | 'Finished'; data?: { contentLength?: number; chunkLength?: number } }) => void): Promise<void>;
 }
 
@@ -27,6 +28,8 @@ export interface UpdateInfo {
   assetName: string | null;
   pageUrl: string;
   newer: boolean;
+  /** «Что нового», list items. */
+  notes: string[];
   /** Set when the update can be installed from inside the app. */
   native?: NativeUpdate;
 }
@@ -38,9 +41,9 @@ async function checkNative(): Promise<UpdateInfo | null> {
     const { check } = await import('@tauri-apps/plugin-updater');
     const u = (await check({ timeout: 15000 })) as NativeUpdate | null;
     const page = `https://github.com/${UPDATE_REPO}/releases/latest`;
-    if (!u) return { number: BUILD_NUMBER, name: '', publishedAt: '', assetUrl: null, assetName: null, pageUrl: page, newer: false };
+    if (!u) return { number: BUILD_NUMBER, name: '', publishedAt: '', assetUrl: null, assetName: null, pageUrl: page, newer: false, notes: [] };
     const n = buildOfVersion(u.version);
-    return { number: n, name: `Сборка №${n}`, publishedAt: u.date ?? '', assetUrl: null, assetName: null, pageUrl: page, newer: true, native: u };
+    return { number: n, name: `Сборка №${n}`, publishedAt: u.date ?? '', assetUrl: null, assetName: null, pageUrl: page, newer: true, native: u, notes: notesItems(u.body) };
   } catch (e) {
     console.warn('updater check failed, falling back to the GitHub API', e);
     return null;
@@ -59,7 +62,7 @@ export async function installNative(u: NativeUpdate, onProgress: (p: number | nu
   await relaunch();
 }
 
-import { buildOfTag, buildOfVersion, pickAsset, platform, type GhRelease } from './updateAssets';
+import { buildOfTag, buildOfVersion, notesItems, pickAsset, platform, type GhRelease } from './updateAssets';
 
 export async function checkUpdate(): Promise<UpdateInfo> {
   const n = await checkNative();
@@ -78,6 +81,6 @@ export async function checkUpdate(): Promise<UpdateInfo> {
   const a = pickAsset(r.assets || [], platform());
   return {
     number, name: r.name || r.tag_name, publishedAt: r.published_at, assetUrl: a?.browser_download_url ?? null, assetName: a?.name ?? null,
-    pageUrl: r.html_url, newer: number > BUILD_NUMBER
+    pageUrl: r.html_url, newer: number > BUILD_NUMBER, notes: notesItems(r.body)
   };
 }

@@ -23,7 +23,8 @@ import { saveFile, openTextFile, safeFileName } from './storage/files';
 import { findExisting, importBundle, newLibraryItems, makeBackup, makeProjectBundle, parseBundle, parseSitesCsv, sitesToCsv, type Bundle } from './storage/exchange';
 import { isTauri } from './platform';
 import { checkUpdate, installNative, type UpdateInfo } from './net/update';
-import { BUILD_NUMBER } from './config';
+import { BUILD_NUMBER, RELEASE_NOTES } from './config';
+import { notesItems } from './net/updateAssets';
 import { openExternal } from './net/external';
 import { clearTileCache } from './map/tileCache';
 
@@ -258,6 +259,7 @@ export function App() {
       body: (
         <div className="import-info">
           <p>На GitHub опубликована <b>сборка №{u.number}</b>{date ? <> от {date}</> : null}. У вас {BUILD_NUMBER ? <>сборка №{BUILD_NUMBER}</> : 'сборка без номера'}.</p>
+          {u.notes.length ? <div className="whats-new"><b>Что нового</b><ul>{u.notes.map((n, i) => <li key={i}>{n}</li>)}</ul></div> : null}
           {u.native ? <p>Программа сама скачает новую версию, проверит её подпись, установит и перезапустится. Это займёт около минуты.</p>
             : u.assetName ? <p>Будет скачан установщик <b>{u.assetName}</b>. После загрузки закройте программу и запустите его — новая версия установится поверх текущей.</p>
             : <p>Установщик для вашей системы в выпуске не найден — откроется страница выпуска на GitHub.</p>}
@@ -283,6 +285,21 @@ export function App() {
       }
     });
   };
+
+  // «Что нового» once after the app was updated to this build.
+  useEffect(() => {
+    const items = notesItems(RELEASE_NOTES);
+    if (!store.whatsNew || !items.length) return;
+    setDialog({
+      title: `Программа обновлена: сборка №${store.whatsNew}`,
+      wide: true,
+      body: <div className="whats-new"><b>Что нового</b><ul>{items.map((n, i) => <li key={i}>{n}</li>)}</ul></div>,
+      confirm: 'Понятно',
+      cancel: null,
+      onConfirm: () => {}
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store.whatsNew]);
 
   /* ---------- project exchange between engineers ---------- */
   const exportProject = () => {

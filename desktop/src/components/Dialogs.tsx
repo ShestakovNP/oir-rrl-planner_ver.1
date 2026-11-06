@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { parseCoord } from '../data/calc/geo';
 import { useStore } from '../state/store';
-import { APP_NAME, APP_VERSION, BUILD_NUMBER, ORG_FULL, TILE_PROVIDERS } from '../config';
+import { APP_NAME, APP_VERSION, BUILD_NUMBER, COMPANY, ORG_FULL, TEAM_LEAD, TILE_PROVIDERS } from '../config';
 import { OirMark } from '../brand/Logo';
 import { tileCacheStats } from '../map/tileCache';
 import { Field, Icon, parseNum } from './ui';
@@ -45,7 +45,7 @@ export function AddSiteDialog({ onClose, onCreate, initial }: { onClose(): void;
   return (
     <Modal title="Новый объект" onClose={onClose} onSubmit={submit} submit="Добавить">
       <div className="grid2">
-        <Field label="Название" htmlFor="ns-name" className="span2"><input id="ns-name" ref={ref} className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="например, Шегарка" /></Field>
+        <Field label="Название" htmlFor="ns-name" className="span2"><input id="ns-name" ref={ref} className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="например, БС Северная" /></Field>
         <Field label="Широта" htmlFor="ns-lat"><input id="ns-lat" className="input num" value={lat} onChange={(e) => setLat(e.target.value)} placeholder={`56°33'50.19" или 56.5639`} /></Field>
         <Field label="Долгота" htmlFor="ns-lon"><input id="ns-lon" className="input num" value={lon} onChange={(e) => setLon(e.target.value)} placeholder={`84°04'43.34" или 84.0787`} /></Field>
         <Field label="Номер БС / код" htmlFor="ns-code" className="span2"><input id="ns-code" className="input" value={code} onChange={(e) => setCode(e.target.value)} placeholder="необязательно" /></Field>
@@ -94,6 +94,11 @@ export function AboutDialog({ onClose }: { onClose(): void }) {
   return (
     <Modal title="О программе и данных" onClose={onClose} wide>
       <div className="about-mark"><OirMark size={56} /><div><b>{APP_NAME}</b><div className="hint">{ORG_FULL} · версия {APP_VERSION}{BUILD_NUMBER ? ` · сборка №${BUILD_NUMBER}` : ''}</div></div></div>
+      <div className="section about-dev">
+        <h3>Разработчик</h3>
+        <p>Разработано {ORG_FULL.replace('Отдел', 'Отделом')} (ОИР), {COMPANY}.</p>
+        <p>Руководитель группы — {TEAM_LEAD}.</p>
+      </div>
       <div className="section">
         <h3>Где хранятся данные</h3>
         <p>Все проекты, объекты, пролёты и справочник хранятся только на этом компьютере, в файле базы данных:</p>
@@ -103,11 +108,11 @@ export function AboutDialog({ onClose }: { onClose(): void }) {
       <div className="section">
         <h3>Интернет</h3>
         <p className="hint">Сеть нужна только для подложек карты, поиска мест и загрузки рельефа. Расчёты, данные и отчёты работают без интернета. Кэш карты: {tiles}.</p>
-        <p className="hint">Сервисы: {TILE_PROVIDERS.map((t) => t.name).join(', ')}; поиск — OSM Nominatim; рельеф — OpenTopoData (SRTM 30 м); здания и лес на трассе — OpenStreetMap (Overpass API). Других обращений в сеть нет: ни аналитики, ни регистрации, ни собственных серверов.</p>
+        <p className="hint">Сервисы: {TILE_PROVIDERS.map((t) => t.name).join(', ')}; поиск — OSM Nominatim; рельеф — OpenTopoData (SRTM 30 м); здания и лес на трассе — OpenStreetMap (Overpass API); обновления программы — выпуски на GitHub. Других обращений в сеть нет: ни аналитики, ни регистрации, ни собственных серверов.</p>
       </div>
       <div className="section">
         <h3>Методика</h3>
-        <p className="hint">МСЭ-R P.525, P.526 (препятствие-нож), P.530 (многолучёвость, дождь), P.838, P.676; геодезия — WGS-84 (Винсенти). Шрифт отчётов — Liberation Sans (SIL OFL 1.1).</p>
+        <p className="hint">МСЭ-R P.525, P.526 (препятствие-нож), P.530 (многолучёвость, дождь), P.838, P.676, F.699; ГОСТ Р 53363-2009 (по выбору в «Климат и норма»); геодезия — WGS-84 (Винсенти). Шрифт отчётов — Liberation Sans (SIL OFL 1.1).</p>
       </div>
     </Modal>
   );

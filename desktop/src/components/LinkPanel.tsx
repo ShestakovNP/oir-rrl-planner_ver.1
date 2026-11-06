@@ -497,7 +497,7 @@ function ProfileTab({ link, result, set, notify, autoLoading }: { link: Link; re
         <h3>Точки профиля <span className="hint">расстояние, км; земля, м; высота препятствия, м; тип: З — здание, Л — лес, В — вода (необязательно)</span></h3>
         <textarea id={`${link.id}-profile`} className="textarea" rows={12} spellCheck={false} value={text} onChange={(e) => applyText(e.target.value)} aria-label="Точки профиля" />
         {parsed.bad.length ? <div className="notice">Не прочитаны строки: {parsed.bad.slice(0, 8).join(', ')}. Они пропущены.</div> : null}
-        <p className="hint">Можно вставить столбцы из Excel или DRRL. Первая точка — «{A.name}», последняя — «{B.name}». Если длина профиля не совпадает с расстоянием по координатам, профиль растягивается.</p>
+        <p className="hint">Можно вставить столбцы из Excel. Первая точка — «{A.name}», последняя — «{B.name}». Если длина профиля не совпадает с расстоянием по координатам, профиль растягивается.</p>
       </div>
     </>
   );

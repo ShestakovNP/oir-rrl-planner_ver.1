@@ -3,9 +3,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { Library, Link, Project, Site } from '../data/types';
 import { openRepo, type Repo } from '../storage/repo';
 import { calculateLink, channelsShareFrequency, type LinkResult } from '../data/calc/link';
-import { baseLink, defaultLibrary } from '../data/samples';
+import { baseLink, defaultLibrary, isOldTemplateRadio } from '../data/samples';
 import { uid } from '../data/ids';
-import { BUILD_ID, RESET_PROJECTS_ON_NEW_BUILD } from '../config';
+import { BUILD_ID, BUILD_NUMBER, RESET_PROJECTS_ON_NEW_BUILD } from '../config';
 import { isTauri } from '../platform';
 import { makeBackup } from '../storage/exchange';
 
@@ -48,6 +48,8 @@ export interface Store {
   reloadAll(): Promise<void>;
   /** One-time message from start-up (e.g. projects cleared for a new build). */
   bootNotice: string | null;
+  /** Build number whose «Что нового» should be shown once (the app was just updated). */
+  whatsNew: number | null;
 }
 
 const Ctx = createContext<Store | null>(null);
@@ -62,6 +64,7 @@ export function StoreProvider({ children, fallback }: { children: ReactNode; fal
   const [repo, setRepo] = useState<Repo | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [bootNotice, setBootNotice] = useState<string | null>(null);
+  const [whatsNew, setWhatsNew] = useState<number | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [sites, setSites] = useState<Site[]>([]);
@@ -141,6 +144,16 @@ export function StoreProvider({ children, fallback }: { children: ReactNode; fal
       }
       await r.setSetting('migration:empty-radios', true);
     }
+    // Also drop renamed templates and anything that came from the old example data.
+    if (!(await r.getSetting<boolean>('migration:empty-radios-2'))) {
+      // Runs once (flag below); removes only untouched template entries, never user data.
+      if (lib && lib.radios.some(isOldTemplateRadio)) { lib = { ...lib, radios: lib.radios.filter((x) => !isOldTemplateRadio(x)) }; await r.saveLibrary(lib); }
+      if (lib && lib.antennas.some((a) => /^Шаблон\./.test(a.notes || ''))) {
+        lib = { ...lib, antennas: lib.antennas.map((a) => (/^Шаблон\./.test(a.notes || '') ? { ...a, notes: a.notes.replace(/^Шаблон\.\s*/, '') } : a)) };
+        await r.saveLibrary(lib);
+      }
+      await r.setSetting('migration:empty-radios-2', true);
+    }
     // Older versions named a fresh entry «Новая радиостанция»; the library now calls them ППУ.
     if (lib && lib.radios.some((x) => /^Новая радиостанция$/i.test(x.name.trim()))) {
       lib = { ...lib, radios: lib.radios.map((x) => (/^Новая радиостанция$/i.test(x.name.trim()) ? { ...x, name: 'Новое ППУ' } : x)) };
@@ -149,6 +162,12 @@ export function StoreProvider({ children, fallback }: { children: ReactNode; fal
     const st = { ...DEFAULT_SETTINGS, ...((await r.getSetting<Settings>('settings')) ?? {}) };
     if (resetNote) { st.lastProjectId = null; st.favoriteProjects = []; st.guideDone = false; await r.setSetting('settings', st); }
     setBootNotice(resetNote);
+    // «Что нового» once after an update: a newer build than the last one started here.
+    if (BUILD_NUMBER > 0) {
+      const seen = await r.getSetting<number>('lastSeenBuild');
+      if (seen == null ? st.guideDone : seen < BUILD_NUMBER) setWhatsNew(BUILD_NUMBER);
+      if (seen !== BUILD_NUMBER) await r.setSetting('lastSeenBuild', BUILD_NUMBER);
+    }
     setSettings(st);
     setLibrary(lib ?? { radios: [], antennas: [] });
     setProjects(ps);
@@ -202,7 +221,7 @@ export function StoreProvider({ children, fallback }: { children: ReactNode; fal
   const project = projects.find((p) => p.id === projectId) ?? null;
 
   const store: Store = {
-    repo, projects, project, sites, links, library, results, settings, setSetting, bootNotice,
+    repo, projects, project, sites, links, library, results, settings, setSetting, bootNotice, whatsNew,
     async selectProject(id) {
       await loadProject(repo, id);
       setSetting('lastProjectId', id);

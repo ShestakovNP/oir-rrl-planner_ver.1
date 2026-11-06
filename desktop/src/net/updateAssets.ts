@@ -1,6 +1,6 @@
 /** Pure helpers of the update check (no network): release tag → build number, installer for this system. */
 export interface GhAsset { name: string; browser_download_url: string }
-export interface GhRelease { tag_name: string; name: string | null; html_url: string; published_at: string; assets: GhAsset[] }
+export interface GhRelease { tag_name: string; name: string | null; html_url: string; published_at: string; body?: string | null; assets: GhAsset[] }
 
 export const platform = (): 'mac' | 'win' | 'other' => {
   const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
@@ -20,3 +20,8 @@ export function pickAsset(assets: GhAsset[], os: 'mac' | 'win' | 'other'): GhAss
 
 /** 1.0.12 → 12 (the workflow sets the version to 1.0.<build number>). */
 export const buildOfVersion = (v: string) => { const m = v.match(/^\d+\.\d+\.(\d+)$/); return m ? Number(m[1]) : 0; };
+
+/** Release text → list items: lines starting with «-», «*» or «•»; other non-empty lines as they are. */
+export function notesItems(text: string | null | undefined): string[] {
+  return (text || '').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !/^#+\s/.test(l) && !/^Установщики ОИР RRL Planner/.test(l)).map((l) => l.replace(/^[-*•]\s*/, ''));
+}

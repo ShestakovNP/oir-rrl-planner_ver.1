@@ -459,3 +459,7 @@ table.tbl { border-collapse: collapse; width: 100%; font-size: 12.5px; }
 .upd-bar span { display: block; height: 100%; background: var(--accent); transition: width .2s; }
 .upd-bar span.indef { animation: updIndef 1.2s ease-in-out infinite; }
 @keyframes updIndef { 0% { margin-left: -30%; } 100% { margin-left: 100%; } }
+
+.whats-new { background: var(--sunk); border-radius: 8px; padding: 10px 12px; margin: 0 0 10px; }
+.whats-new ul { margin: 6px 0 0; padding-left: 18px; }
+.whats-new li { margin: 3px 0; }
