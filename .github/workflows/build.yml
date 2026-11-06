@@ -6,6 +6,9 @@
 # which is published as the latest one when both systems built. The app's «Обновить приложение»
 # installs it from there and checks the signature with the public key in tauri.conf.json.
 #
+# «Что нового»: edit RELEASE_NOTES.md (one «- » line per change) before running a build — it becomes
+# the release text and the update dialog in the app shows it.
+#
 # Needs two repository secrets (Settings → Secrets and variables → Actions):
 #   TAURI_SIGNING_PRIVATE_KEY           — contents of the private key file
 #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  — its password
@@ -55,6 +58,18 @@ jobs:
       - name: Calculation tests
         run: npm test
 
+      - name: Release notes (RELEASE_NOTES.md)
+        id: notes
+        shell: bash
+        run: |
+          {
+            echo 'text<<EOF_NOTES'
+            cat ../RELEASE_NOTES.md
+            echo
+            echo 'Установщики ОИР RRL Planner: .dmg — macOS, .exe или .msi — Windows. Установленная программа обновляется сама: меню с луной → «Обновить приложение».'
+            echo 'EOF_NOTES'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build app and upload to the release draft
         uses: tauri-apps/tauri-action@v0
         env:
@@ -66,7 +81,7 @@ jobs:
           args: ${{ matrix.args }}
           tagName: build-${{ github.run_number }}
           releaseName: Сборка №${{ github.run_number }}
-          releaseBody: 'Установщики ОИР RRL Planner: .dmg — macOS, .exe или .msi — Windows. Установленная программа обновляется сама: меню с луной → «Обновить приложение».'
+          releaseBody: ${{ steps.notes.outputs.text }}
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
