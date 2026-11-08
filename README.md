@@ -162,6 +162,8 @@ npm run app:build:win
 | nominatim.openstreetmap.org | поиск мест по названию | не нужен |
 | api.opentopodata.org | высоты SRTM 30 м для профиля | не нужен |
 | overpass-api.de | здания, лесные массивы и водоёмы на трассе (данные OpenStreetMap) | не нужен |
+| dataforgood-fb-data.s3.amazonaws.com | деревья на трассе: глобальная карта высот деревьев Meta и WRI (≈1 м, Cloud-Optimized GeoTIFF, читаются только нужные фрагменты; CC BY 4.0) | не нужен |
+| esa-worldcover.s3.eu-central-1.amazonaws.com | запасной источник: карта растительности ESA WorldCover 2021 (10 м, класс «деревья»; CC BY 4.0) | не нужен |
 | api.github.com, github.com, objects.githubusercontent.com | обновление: последний выпуск в публичном репозитории программы и его файлы (по кнопке «Обновить приложение» и одна проверка при запуске) | не нужен |
 | api.maptiler.com | подложки MapTiler — только если задан ключ | необязательный |
 
