@@ -108,7 +108,7 @@ export function AboutDialog({ onClose }: { onClose(): void }) {
       <div className="section">
         <h3>Интернет</h3>
         <p className="hint">Сеть нужна только для подложек карты, поиска мест и загрузки рельефа. Расчёты, данные и отчёты работают без интернета. Кэш карты: {tiles}.</p>
-        <p className="hint">Сервисы: {TILE_PROVIDERS.map((t) => t.name).join(', ')}; поиск — OSM Nominatim; рельеф — OpenTopoData (SRTM 30 м); здания и лес на трассе — OpenStreetMap (Overpass API); обновления программы — выпуски на GitHub. Других обращений в сеть нет: ни аналитики, ни регистрации, ни собственных серверов.</p>
+        <p className="hint">Сервисы: {TILE_PROVIDERS.map((t) => t.name).join(', ')}; поиск — OSM Nominatim; рельеф — OpenTopoData (SRTM 30 м); здания, лес и вода на трассе — OpenStreetMap (Overpass API); деревья — спутниковая карта высот деревьев Meta и WRI и карта растительности ESA WorldCover (открытые данные на AWS, CC BY 4.0); обновления программы — выпуски на GitHub. Других обращений в сеть нет: ни аналитики, ни регистрации, ни собственных серверов.</p>
       </div>
       <div className="section">
         <h3>Методика</h3>

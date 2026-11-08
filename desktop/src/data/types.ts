@@ -152,6 +152,10 @@ export interface Link {
   clutterSummary?: string;
   /** Forest height used for OSM forest areas, m. */
   forestHeight?: number;
+  /** Trees from satellite data (canopy height map, land cover); absent = on. */
+  satTrees?: boolean;
+  /** Which satellite tree data the clutter was built with (null = none / failed; absent = older version). */
+  clutterSat?: 'chm' | 'worldcover' | null;
   /** Link protection (redundancy) scheme; absent = 1+0. */
   protection?: Protection;
   /** Magnetic declination, degrees (east +). null = not set. */

@@ -25,7 +25,7 @@ export class NetworkError extends Error {
   }
 }
 
-export async function httpGet(url: string, opts: { accept?: string; timeoutMs?: number } = {}): Promise<Response> {
+export async function httpGet(url: string, opts: { accept?: string; timeoutMs?: number; headers?: Record<string, string> } = {}): Promise<Response> {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) {
     reportNetwork(false);
     throw new NetworkError('Нет подключения к интернету.', true);
@@ -33,7 +33,7 @@ export async function httpGet(url: string, opts: { accept?: string; timeoutMs?: 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 20000);
   try {
-    const headers: Record<string, string> = { Accept: opts.accept ?? '*/*' };
+    const headers: Record<string, string> = { Accept: opts.accept ?? '*/*', ...(opts.headers ?? {}) };
     let res: Response;
     if (isTauri()) {
       const f = await getTauriFetch();
@@ -56,4 +56,17 @@ export async function httpJson<T>(url: string, timeoutMs?: number): Promise<T> {
   const res = await httpGet(url, { accept: 'application/json', timeoutMs });
   if (!res.ok) throw new NetworkError(`Сервис ответил ошибкой ${res.status}.`, false);
   return (await res.json()) as T;
+}
+
+/**
+ * Bytes [start, end) of a file (HTTP Range). null when the file does not exist: public S3
+ * buckets answer 403 or 404 for a missing key (no tile over the sea, for example).
+ */
+export async function httpRange(url: string, start: number, end: number, timeoutMs = 30000): Promise<Uint8Array | null> {
+  const res = await httpGet(url, { headers: { Range: `bytes=${start}-${end - 1}` }, timeoutMs });
+  if (res.status === 404 || res.status === 403) return null;
+  if (!res.ok) throw new NetworkError(`Сервис ответил ошибкой ${res.status}.`, false);
+  const buf = new Uint8Array(await res.arrayBuffer());
+  // a server that ignores Range sends the whole file
+  return res.status === 200 && buf.length > end - start ? buf.subarray(start, end) : buf;
 }

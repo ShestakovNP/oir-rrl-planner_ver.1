@@ -4,6 +4,7 @@
  */
 import { intermediate, rad, vincenty } from './geo';
 import type { ProfilePoint } from '../types';
+import { canopyText, type Canopy } from '../canopy';
 
 export interface ClutterObject {
   kind: 'building' | 'forest' | 'water';
@@ -29,6 +30,13 @@ export interface ClutterOptions {
   forestHeight: number;
   /** Corridor half-width, m: obstacles this close to the path centre line count. */
   halfWidth?: number;
+  /**
+   * Trees from satellite data. With the canopy height map it replaces the OpenStreetMap forest
+   * (real heights, clearings included); with land cover it is added to the OpenStreetMap forest.
+   */
+  canopy?: Canopy | null;
+  /** Why satellite trees are missing (shown in the summary). */
+  canopyError?: string;
 }
 
 export interface ClutterResult {
@@ -42,6 +50,8 @@ export interface ClutterResult {
   /** Share of the path length covered by obstacles, 0..1. */
   coverage: number;
   summary: string;
+  /** Satellite tree data used, if any. */
+  canopy?: 'chm' | 'worldcover' | null;
 }
 
 /* local metric frame around the link, accurate enough for a corridor of tens of metres */
@@ -120,6 +130,8 @@ export function applyClutter(
   const n = Math.max(2, Math.round(D / stepKm) + 1);
   const cAt: number[] = [], tAt: ('b' | 'f' | 'w' | undefined)[] = [];
   const usedB = new Set<number>(), usedF = new Set<number>(), usedW = new Set<number>();
+  const chm = opts.canopy?.source === 'chm';
+  let satTrees = 0;
   for (let i = 0; i < n; i++) {
     const t = i / (n - 1);
     const [la, lo] = intermediate(lat1, lon1, lat2, lon2, t);
@@ -133,9 +145,15 @@ export function applyClutter(
       else hit = inside(p, s.xy) || (s.kind === 'building' && distToPoly(p, s.xy) <= half);
       if (!hit) return;
       if (s.kind === 'water') { usedW.add(k); if (!kind) kind = 'w'; return; }
+      if (s.kind === 'forest' && chm) return;
       (s.kind === 'building' ? usedB : usedF).add(k);
       if (s.height > c) { c = s.height; kind = s.kind === 'building' ? 'b' : 'f'; }
     });
+    if (opts.canopy) {
+      const h = opts.canopy.heightAt(t);
+      if (h > 0 && h > c && kind !== 'b') { c = h; kind = 'f'; satTrees++; }
+      else if (h > 0 && kind === 'f') satTrees++;
+    }
     // keep 50 m around each antenna free: the masts themselves stand there
     const dKm = t * D;
     const nearMast = dKm < 0.05 || dKm > D - 0.05;
@@ -174,12 +192,14 @@ export function applyClutter(
   const coverage = covered / n;
   const parts: string[] = [];
   if (buildings) parts.push(`зданий: ${buildings}${buildings ? ` (высота из OSM у ${measured}, у остальных — типовая по виду здания)` : ''}`);
-  if (forests) parts.push(`лесных массивов: ${forests} (высота леса ${opts.forestHeight} м)`);
+  if (forests && !chm) parts.push(`лесных массивов на карте OpenStreetMap: ${forests} (высота леса ${opts.forestHeight} м)`);
   if (waters) parts.push(`водных объектов: ${waters} (${Math.round(waterShare * 100)} % длины пролёта над водой)`);
-  const summary = parts.length
-    ? `На трассе найдено ${parts.join(', ')}.${buildings || forests ? ` Здания и лес занимают ${Math.round(coverage * 100)} % длины пролёта.` : ''}`
-    : 'На трассе по данным OpenStreetMap нет зданий, лесных массивов и водоёмов.';
-  return { profile: dedup, buildings, buildingsMeasured: measured, forests, waters, waterShare, coverage, summary };
+  const sat = opts.canopy ? ` ${canopyText(opts.canopy, opts.forestHeight)}` : opts.canopyError ? ` Спутниковые данные о деревьях не загружены (${opts.canopyError}) — лес только по OpenStreetMap.` : '';
+  const anyTrees = forests || satTrees > 0;
+  const summary = (parts.length
+    ? `На трассе найдено ${parts.join(', ')}.${buildings || anyTrees ? ` Здания и лес занимают ${Math.round(coverage * 100)} % длины пролёта.` : ''}`
+    : anyTrees ? `Здания и лес занимают ${Math.round(coverage * 100)} % длины пролёта.` : 'На трассе по данным OpenStreetMap нет зданий, лесных массивов и водоёмов.') + sat;
+  return { profile: dedup, buildings, buildingsMeasured: measured, forests: chm ? 0 : forests, waters, waterShare, coverage, summary, canopy: opts.canopy?.source ?? null };
 }
 
 /* ---------- OpenStreetMap (Overpass) answer parsing ---------- */

@@ -9,6 +9,9 @@ import { fmt, ghz } from '../data/calc/format';
 import { useStore } from '../state/store';
 import { fetchTerrainProfile } from '../net/elevation';
 import { applyClutter, fetchClutterObjects } from '../net/clutter';
+import { fetchCanopy } from '../net/canopy';
+import type { Canopy } from '../data/canopy';
+import { vincenty } from '../data/calc/geo';
 import { Field, Icon, NumField, parseNum } from './ui';
 import { ModesEditor, incomplete } from './ModesEditor';
 import { uid } from '../data/ids';
@@ -439,9 +442,15 @@ function ProfileTab({ link, result, set, notify, autoLoading }: { link: Link; re
       }
       setBusy('Ищу здания, лес и водоёмы на трассе (OpenStreetMap)…'); setProgress(0.6);
       const objs = await fetchClutterObjects(A.lat, A.lon, B.lat, B.lon, { forestHeight: forestH });
-      setProgress(0.9);
-      const res = applyClutter(base, A.lat, A.lon, B.lat, B.lon, objs, { forestHeight: forestH });
-      Object.assign(patch, { profile: res.profile, clutterSource: 'osm', clutterFetchedAt: Date.now(), clutterSummary: res.summary });
+      let canopy: Canopy | null = null, canopyError: string | undefined;
+      if (link.satTrees !== false) {
+        setBusy('Загружаю деревья со спутниковой карты высот…'); setProgress(0.7);
+        try { canopy = await fetchCanopy(A.lat, A.lon, B.lat, B.lon, vincenty(A.lat, A.lon, B.lat, B.lon).km, forestH, (f) => setProgress(0.7 + 0.25 * f)); }
+        catch (e) { canopyError = (e as Error).message || 'нет связи'; }
+      }
+      setProgress(0.97);
+      const res = applyClutter(base, A.lat, A.lon, B.lat, B.lon, objs, { forestHeight: forestH, canopy, canopyError });
+      Object.assign(patch, { profile: res.profile, clutterSource: 'osm', clutterFetchedAt: Date.now(), clutterSummary: res.summary, clutterSat: canopy?.source ?? null });
       set(patch);
       setText(fmtPts(res.profile));
       notify(res.summary);
@@ -470,20 +479,23 @@ function ProfileTab({ link, result, set, notify, autoLoading }: { link: Link; re
       {result ? <ProfileChart r={result} height={240} linkId={link.id} notify={notify} /> : null}
       <div className="section">
         <h3>Рельеф, здания, лес и вода с карты <span className="hint">загружаются автоматически</span></h3>
-        <p className="hint">Высоты земли — из открытой базы SRTM 30 м (OpenTopoData). Здания, лесные массивы и водоёмы (реки, озёра, водохранилища) на трассе — из OpenStreetMap (Overpass API): высота здания берётся из карты (высота или этажность), если её нет — типовая для вида здания; для леса — высота, указанная ниже. Над водой рассчитывается отражение луча от водной глади (см. «Итог»). Загрузка идёт сама: при создании пролёта, после переноса объекта и при восстановлении сети, если раньше не получилось. Кнопки ниже — чтобы обновить вручную. Ключи не нужны; после загрузки всё хранится в программе и работает без интернета. Профиль, введённый вручную, программа не перезаписывает.</p>
+        <p className="hint">Высоты земли — из открытой базы SRTM 30 м (OpenTopoData). Здания и водоёмы на трассе — из OpenStreetMap (Overpass API): высота здания берётся из карты (высота или этажность), если её нет — типовая для вида здания. Лес — по спутниковой карте высот деревьев Meta и WRI (пиксель около 1 м, реальная высота крон, просеки и поляны видны); если она недоступна — по карте растительности ESA WorldCover и лесным массивам OpenStreetMap с высотой, указанной ниже. Над водой рассчитывается отражение луча от водной глади (см. «Итог»). Загрузка идёт сама: при создании пролёта, после переноса объекта и при восстановлении сети, если раньше не получилось. Кнопки ниже — чтобы обновить вручную. Ключи не нужны; после загрузки всё хранится в программе и работает без интернета. Профиль, введённый вручную, программа не перезаписывает.</p>
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
           <button type="button" className="btn primary" onClick={() => void loadAll(true)} disabled={!!busy || autoLoading}><Icon name="mountain" />{link.profileSource === 'srtm' ? 'Загрузить заново' : 'Загрузить сейчас'}</button>
           <button type="button" className="btn" onClick={() => void loadAll(false)} disabled={!!busy || autoLoading || link.profile.length < 2} title="Рельеф не трогать, обновить только здания, лес и воду">Обновить только здания, лес и воду</button>
-          <Field label="Высота леса, м" htmlFor={`${link.id}-fh`}><NumField id={`${link.id}-fh`} value={forestH} min={0} max={60} onChange={(v) => set({ forestHeight: v ?? 20 })} /></Field>
+          <Field label="Высота леса, м" htmlFor={`${link.id}-fh`} hint="если нет карты высот деревьев"><NumField id={`${link.id}-fh`} value={forestH} min={0} max={60} onChange={(v) => set({ forestHeight: v ?? 20 })} /></Field>
         </div>
+        <label className="check" style={{ marginTop: 8 }}>
+          <input type="checkbox" checked={link.satTrees !== false} onChange={(e) => set({ satTrees: e.target.checked })} /> Лес по спутниковым данным (рекомендуется) — после изменения нажмите «Обновить только здания, лес и воду»
+        </label>
         {busy ? <><div className="hint">{busy}</div><div className="progress" aria-label={busy}><div style={{ width: `${Math.max(8, progress * 100)}%` }} /></div></> : null}
         <div className="kv">
           <div className="t">Рельеф</div>
           <div className="r" style={{ fontFamily: 'var(--f-ui)' }}>{link.profileSource === 'srtm' ? `SRTM, ${date(link.profileFetchedAt)}` : link.profileSource === 'manual' ? 'введён вручную' : 'не задан'}</div>
           <div className="t">Здания, лес, вода<small>{link.clutterSummary || ''}</small></div>
-          <div className="r" style={{ fontFamily: 'var(--f-ui)' }}>{link.clutterSource === 'osm' ? `OpenStreetMap, ${date(link.clutterFetchedAt)}` : link.clutterSource === 'manual' ? 'вручную' : 'не заданы'}</div>
+          <div className="r" style={{ fontFamily: 'var(--f-ui)' }}>{link.clutterSource === 'osm' ? `OpenStreetMap${link.clutterSat === 'chm' ? ' + карта высот деревьев' : link.clutterSat === 'worldcover' ? ' + ESA WorldCover' : ''}, ${date(link.clutterFetchedAt)}` : link.clutterSource === 'manual' ? 'вручную' : 'не заданы'}</div>
         </div>
-        <p className="hint">Данные OpenStreetMap бывают неполными: в сёлах и на окраинах часть зданий, лесов и мелких водоёмов может быть не нанесена. Сверяйте с обследованием трассы и при необходимости правьте вручную.</p>
+        <p className="hint">Данные OpenStreetMap бывают неполными: в сёлах и на окраинах часть зданий и мелких водоёмов может быть не нанесена. Спутниковая карта высот деревьев построена моделью по снимкам и даёт погрешность в несколько метров; рельеф SRTM в лесу частично включает кроны. Сверяйте с обследованием трассы и при необходимости правьте вручную.</p>
       </div>
       <details className="section">
         <summary className="sub" style={{ cursor: 'pointer' }}>Задать препятствия вручную</summary>

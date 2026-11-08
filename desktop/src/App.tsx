@@ -17,6 +17,8 @@ import { uid } from './data/ids';
 import type { Link } from './data/types';
 import { fetchTerrainProfile } from './net/elevation';
 import { applyClutter, fetchClutterObjects } from './net/clutter';
+import { fetchCanopy } from './net/canopy';
+import type { Canopy } from './data/canopy';
 import { useNetState } from './net/online';
 import { buildReport } from './report/report';
 import { saveFile, openTextFile, safeFileName } from './storage/files';
@@ -133,7 +135,7 @@ export function App() {
   const [loadingIds, setLoadingIds] = useState<Set<string>>(new Set());
   const inflight = useRef<Set<string>>(new Set());
   const failed = useRef<Map<string, string>>(new Map());
-  const autoProfile = useCallback(async (id: string) => {
+  const autoProfile = useCallback(async (id: string, clutterOnly = false) => {
     const l0 = linksRef.current.find((x) => x.id === id);
     const a = l0 && sitesRef.current.find((s) => s.id === l0.siteA), b = l0 && sitesRef.current.find((s) => s.id === l0.siteB);
     if (!l0 || !a || !b || inflight.current.has(id)) return;
@@ -142,10 +144,15 @@ export function App() {
     setLoadingIds(new Set(inflight.current));
     const latest = () => linksRef.current.find((x) => x.id === id);
     try {
-      const pts = await fetchTerrainProfile(a.lat, a.lon, b.lat, b.lon);
       let cur = latest();
       if (!cur) return;
-      store.updateLink({ ...cur, profile: pts, profileSource: 'srtm', profileFetchedAt: Date.now(), profileFor: key, clutterSource: 'none', clutterSummary: '' });
+      let pts = cur.profile.map((p) => ({ d: p.d, g: p.g, c: 0 }));
+      if (!clutterOnly || pts.length < 2) {
+        pts = await fetchTerrainProfile(a.lat, a.lon, b.lat, b.lon);
+        cur = latest();
+        if (!cur) return;
+        store.updateLink({ ...cur, profile: pts, profileSource: 'srtm', profileFetchedAt: Date.now(), profileFor: key, clutterSource: 'none', clutterSummary: '' });
+      }
       // Ground heights of the objects follow the terrain model.
       const sa = sitesRef.current.find((s) => s.id === a.id), sb = sitesRef.current.find((s) => s.id === b.id);
       if (sa) store.updateSite({ ...sa, groundM: Math.round(pts[0].g) });
@@ -153,9 +160,14 @@ export function App() {
       try {
         const forestHeight = l0.forestHeight ?? 20;
         const objs = await fetchClutterObjects(a.lat, a.lon, b.lat, b.lon, { forestHeight });
-        const res = applyClutter(pts, a.lat, a.lon, b.lat, b.lon, objs, { forestHeight });
+        let canopy: Canopy | null = null, canopyError: string | undefined;
+        if (l0.satTrees !== false) {
+          try { canopy = await fetchCanopy(a.lat, a.lon, b.lat, b.lon, vincenty(a.lat, a.lon, b.lat, b.lon).km, forestHeight); }
+          catch (e) { canopyError = (e as Error).message || 'нет связи'; }
+        }
+        const res = applyClutter(pts, a.lat, a.lon, b.lat, b.lon, objs, { forestHeight, canopy, canopyError });
         cur = latest();
-        if (cur && cur.profileSource === 'srtm') store.updateLink({ ...cur, profile: res.profile, clutterSource: 'osm', clutterFetchedAt: Date.now(), clutterSummary: res.summary });
+        if (cur && cur.profileSource === 'srtm') store.updateLink({ ...cur, profile: res.profile, clutterSource: 'osm', clutterFetchedAt: Date.now(), clutterSummary: res.summary, clutterSat: canopy?.source ?? null });
         failed.current.delete(id);
         notify(`Профиль «${a.name} — ${b.name}» загружен. ${res.summary}`);
       } catch (e) {
@@ -185,7 +197,10 @@ export function App() {
         if (l.profileSource === 'srtm' && !l.profileFor) { store.updateLink({ ...l, profileFor: key }); continue; }
         const moved = l.profileSource === 'srtm' && l.profileFor !== key;
         const noClutter = l.profileSource === 'srtm' && l.clutterSource !== 'osm' && l.clutterSource !== 'manual';
+        // links loaded by older versions: add trees from satellite data once
+        const noSat = l.profileSource === 'srtm' && l.clutterSource === 'osm' && l.satTrees !== false && l.clutterSat === undefined;
         if (noProfile || moved || noClutter) void autoProfile(l.id);
+        else if (noSat) void autoProfile(l.id, true);
       }
     }, 900);
     return () => window.clearTimeout(t);
