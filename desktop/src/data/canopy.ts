@@ -98,30 +98,63 @@ function summarise(source: Canopy['source'], hs: number[]): Canopy {
   };
 }
 
+/** At most this many points along the path are read from the canopy height map. */
+export const CHM_MAX_POINTS = 1500;
+/** Trees within this distance of the path axis (ground metres, each side) are counted. */
+const CHM_SIDE_M = 8;
+/** Canopy height map is given up after this time and WorldCover is used instead, ms. */
+export const CHM_TIMEOUT_MS = 150_000;
+
 /**
- * Canopy height map: samples every 5 m (and ±6 m across); each 20 m bin takes the 80th percentile
- * of its samples, so a single noisy pixel does not make a tree and a gap in the crowns is kept.
+ * Canopy height map (Meta/WRI). The files are not cloud-optimized: every image row (≈1 m) is a separate
+ * compressed strip of the whole 78-km tile, so each new row is one more download. Hence: one point every
+ * 10–30 m along the path (≤ 1500 points), and trees beside the point are read along the same row (±8 m),
+ * which costs nothing. The height at a point is the 80th percentile of that window, so a single noisy pixel
+ * does not make a tree and a gap in the crowns is kept.
  */
 export async function canopyFromChm(open: OpenCog, lat1: number, lon1: number, lat2: number, lon2: number, dKm: number, onProgress?: (f: number) => void): Promise<Canopy> {
-  const rows = samples(lat1, lon1, lat2, lon2, dKm, 5, 6);
-  const flat = rows.flat();
-  const vals = await readTiled(open, flat, (s) => quadkey(s.lat, s.lon, 9), CHM_URL, (r, s) => {
-    // the map is in Web Mercator metres; if a file comes in degrees, use them as they are
-    const deg = Math.abs(r.info.x0) <= 180 && Math.abs(r.info.y0) <= 90 && r.info.sx < 0.01;
-    const [x, y] = deg ? [s.lon, s.lat] : mercator(s.lat, s.lon);
-    return [(x - r.info.x0) / r.info.sx, (r.info.y0 - y) / r.info.sy];
-  }, onProgress);
-  const per = rows.length, bin = 4; // 4 × 5 m = 20 m
-  const hs: number[] = [];
-  for (let i = 0; i < per; i++) {
-    const lo = Math.max(0, i - bin / 2), hi = Math.min(per - 1, i + bin / 2);
-    const v: number[] = [];
-    for (let j = lo; j <= hi; j++) for (let s = 0; s < 3; s++) { const x = vals[j * 3 + s]; if (x != null && Number.isFinite(x)) v.push(Math.min(MAX_TREE_M, Math.max(0, x))); }
-    v.sort((a, b) => a - b);
-    const p80 = v.length ? v[Math.min(v.length - 1, Math.floor(v.length * 0.8))] : 0;
-    hs.push(p80 >= MIN_TREE_M ? Math.round(p80) : 0);
+  const L = dKm * 1000;
+  const n = Math.max(2, Math.min(CHM_MAX_POINTS, Math.ceil(L / 10)) + 1);
+  const cosLat = Math.cos(((lat1 + lat2) / 2) * Math.PI / 180);
+  const pts: Sample[] = [];
+  for (let i = 0; i < n; i++) { const t = i / (n - 1); const [lat, lon] = intermediate(lat1, lon1, lat2, lon2, t); pts.push({ t, lat, lon }); }
+  const groups = new Map<string, number[]>();
+  pts.forEach((p, i) => { const k = quadkey(p.lat, p.lon, 9); (groups.get(k) ?? groups.set(k, []).get(k)!).push(i); });
+  const hs: number[] = new Array(n).fill(0);
+  let seen = false, gi = 0;
+  for (const [k, idx] of groups) {
+    const r = await open(CHM_URL(k));
+    if (r) {
+      // the map is in Web Mercator metres; if a file comes in degrees, use them as they are
+      const deg = Math.abs(r.info.x0) <= 180 && Math.abs(r.info.y0) <= 90 && r.info.sx < 0.01;
+      const groundPerPx = deg ? r.info.sx * 111320 * cosLat : r.info.sx * cosLat;
+      const w = Math.max(1, Math.min(60, Math.round(CHM_SIDE_M / groundPerPx)));
+      const px: [number, number][] = [];
+      for (const i of idx) {
+        const [x, y] = deg ? [pts[i].lon, pts[i].lat] : mercator(pts[i].lat, pts[i].lon);
+        const c = Math.floor((x - r.info.x0) / r.info.sx), row = Math.floor((r.info.y0 - y) / r.info.sy);
+        for (let j = -w; j <= w; j++) px.push([c + j, row]);
+      }
+      const vals = await r.pixels(px, (d, t) => onProgress?.((gi + d / t) / groups.size));
+      const per = 2 * w + 1;
+      idx.forEach((i, m) => {
+        const v: number[] = [];
+        for (let j = 0; j < per; j++) {
+          const x = vals[m * per + j];
+          // 255 in a byte map is "no data", not a 255-m tree
+          if (x != null && Number.isFinite(x) && x < 255) v.push(Math.min(MAX_TREE_M, Math.max(0, x)));
+        }
+        if (!v.length) return;
+        seen = true;
+        v.sort((a, b) => a - b);
+        const p80 = v[Math.min(v.length - 1, Math.floor(v.length * 0.8))];
+        hs[i] = p80 >= MIN_TREE_M ? Math.round(p80) : 0;
+      });
+    }
+    gi++;
+    onProgress?.(gi / groups.size);
   }
-  if (!vals.some((x) => x != null)) throw new Error('Карта высот деревьев для этого места недоступна.');
+  if (!seen) throw new Error('Карта высот деревьев для этого места недоступна.');
   return summarise('chm', hs);
 }
 
@@ -142,9 +175,12 @@ export async function canopyFromWorldCover(open: OpenCog, lat1: number, lon1: nu
 }
 
 /** Canopy height map first, land cover if it is not reachable. */
-export async function satelliteCanopy(open: OpenCog, lat1: number, lon1: number, lat2: number, lon2: number, dKm: number, forestHeight: number, onProgress?: (f: number) => void): Promise<Canopy> {
+export async function satelliteCanopy(open: OpenCog, lat1: number, lon1: number, lat2: number, lon2: number, dKm: number, forestHeight: number, onProgress?: (f: number) => void, timeoutMs = CHM_TIMEOUT_MS): Promise<Canopy> {
   try {
-    return await canopyFromChm(open, lat1, lon1, lat2, lon2, dKm, onProgress);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`не загрузилась за ${Math.round(timeoutMs / 60000 * 10) / 10} мин (медленная сеть)`.replace('.', ','))), timeoutMs); });
+    try { return await Promise.race([canopyFromChm(open, lat1, lon1, lat2, lon2, dKm, onProgress), late]); }
+    finally { clearTimeout(timer); }
   } catch (e) {
     console.warn('canopy height map failed, trying WorldCover', e);
     const c = await canopyFromWorldCover(open, lat1, lon1, lat2, lon2, dKm, forestHeight, onProgress);

@@ -138,6 +138,16 @@ export class CogReader {
     const miss = ks.filter((k) => !this.entryCache.has(k));
     if (!miss.length) return;
     const o = this.offsets as Arr & { type: number }, c = this.counts as Arr & { type: number };
+    // Strip tables of a large non-tiled file (one entry per image row) are read whole: two requests
+    // instead of hundreds of small ones.
+    if (!(o.inline && c.inline) && o.count * o.size + c.count * c.size <= 4 << 20) {
+      const [bo, bc] = await Promise.all([this.fetchRange(o.offset, o.offset + o.count * o.size), this.fetchRange(c.offset, c.offset + c.count * c.size)]);
+      if (!bo || !bc || bo.length < o.count * o.size || bc.length < c.count * c.size) throw new Error('Файл данных оборвался.');
+      const dvo = new DataView(bo.buffer, bo.byteOffset, bo.byteLength), dvc = new DataView(bc.buffer, bc.byteOffset, bc.byteLength);
+      o.inline = []; c.inline = [];
+      for (let i = 0; i < o.count; i++) o.inline.push(this.num(dvo, i * o.size, o.type));
+      for (let i = 0; i < c.count; i++) c.inline.push(this.num(dvc, i * c.size, c.type));
+    }
     if (o.inline && c.inline) { miss.forEach((k) => this.entryCache.set(k, [o.inline![k], c.inline![k]])); return; }
     miss.sort((a, b) => a - b);
     // group indices that are close together into one request per array
@@ -199,6 +209,11 @@ export class CogReader {
     return p;
   }
 
+  /** Number of tiles or strips a set of pixels falls into — that many downloads. */
+  blocksOf(px: [number, number][]): number {
+    return new Set(px.filter(([c, r]) => c >= 0 && r >= 0 && c < this.info.width && r < this.info.height).map(([c, r]) => Math.floor(r / this.th) * this.across + Math.floor(c / this.tw))).size;
+  }
+
   /** Pixel values (first band) at [col, row]; null outside the image, in empty tiles or nodata. */
   async pixels(px: [number, number][], onProgress?: (done: number, total: number) => void): Promise<(number | null)[]> {
     const { width, height, nodata } = this.info;
@@ -209,7 +224,7 @@ export class CogReader {
     const tiles = new Map<number, ArrayLike<number> | null>();
     // a few downloads at a time
     let next = 0;
-    await Promise.all(Array.from({ length: Math.min(6, ks.length) }, async () => {
+    await Promise.all(Array.from({ length: Math.min(12, ks.length) }, async () => {
       while (next < ks.length) { const k = ks[next++]; tiles.set(k, await this.tile(k)); onProgress?.(++done, ks.length); }
     }));
     const stride = this.planar === 1 ? this.spp : 1;
