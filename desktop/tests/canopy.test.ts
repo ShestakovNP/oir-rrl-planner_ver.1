@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { CogReader, floatPredictor } from '../src/data/cog';
-import { canopyFromChm, canopyFromWorldCover, CHM_URL, WORLDCOVER_URL, quadkey, worldCoverTile, type OpenCog } from '../src/data/canopy';
+import { canopyFromChm, canopyFromWorldCover, satelliteCanopy, CHM_URL, WORLDCOVER_URL, quadkey, worldCoverTile, type OpenCog } from '../src/data/canopy';
 import { applyClutter } from '../src/data/calc/clutter';
 import { vincenty } from '../src/data/calc/geo';
 
@@ -77,4 +77,48 @@ test('COG: предиктор 3 (плавающая точка) по алгор�
   const b = floatPredictor(Uint8Array.from(fx.enc), 5, 2, 4, 1);
   const f = new Float32Array(b.buffer, b.byteOffset, 10);
   assert.deepEqual(Array.from(f), fx.vals);
+});
+
+test('Настоящий файл Meta/WRI: BigTIFF 65536×65536, байт на пиксель, одна строка — одна полоса', async () => {
+  const head = file('chm-real-head.bin');
+  // only the first 4 KB of the real file are kept; the rest (tables, georeference) is zeros here
+  const r = (await CogReader.open(async (s, e) => { const b = new Uint8Array(e - s); b.set(head.subarray(Math.min(s, head.length), Math.min(e, head.length))); return b; }))!;
+  assert.equal(r.info.width, 65536);
+  assert.equal(r.info.height, 65536);
+  assert.equal(r.blocksOf([[100, 5], [60000, 5], [100, 6]]), 2, 'пиксели одной строки — одна загрузка');
+});
+
+test('Карта высот деревьев в полосах (как настоящая): тот же лес и не больше одной загрузки на точку', async () => {
+  const qk = quadkey(A.lat, A.lon, 9);
+  const log: number[] = [];
+  const open: OpenCog = async (url) => (url === CHM_URL(qk) ? CogReader.open(ranged(file('chm-strips.tif'), log)) : null);
+  const c = await canopyFromChm(open, A.lat, A.lon, B.lat, B.lon, D);
+  assert.equal(c.heightAt(1.5 / D), 24);
+  assert.equal(c.heightAt(0.5 / D), 0);
+  assert.ok(c.share > 0.22 && c.share < 0.32, `доля леса ${c.share}`);
+  const gap = [...Array(40)].map((_, i) => c.heightAt((0.95 + i * 0.002) / D)).some((h) => h === 0);
+  assert.ok(gap, 'просека видна');
+  const points = Math.ceil((D * 1000) / 10) + 1;
+  assert.ok(log.length <= points + 5, `загрузок ${log.length} при ${points} точках`);
+});
+
+test('Длинный пролёт: не больше 1500 точек, то есть не больше 1500 загрузок', async () => {
+  const qk = quadkey(A.lat, A.lon, 9);
+  const log: number[] = [];
+  const open: OpenCog = async (url) => (url === CHM_URL(qk) ? CogReader.open(ranged(file('chm-strips.tif'), log)) : null);
+  // 45 km northwards: only the first 3,6 km are in the test file
+  const far = { lat: A.lat + 45 / 111.37, lon: A.lon };
+  await canopyFromChm(open, A.lat, A.lon, far.lat, far.lon, vincenty(A.lat, A.lon, far.lat, far.lon).km).catch(() => null);
+  assert.ok(log.length <= 1500 + 5, `загрузок ${log.length}`);
+});
+
+test('Если карта высот деревьев не успела загрузиться — сразу WorldCover и причина', async () => {
+  const qk = quadkey(A.lat, A.lon, 9);
+  const open: OpenCog = async (url) => {
+    if (url === CHM_URL(qk)) return new Promise(() => {}); // never answers
+    return url === WORLDCOVER_URL('N54E084') ? CogReader.open(ranged(file('wc.tif'))) : null;
+  };
+  const c = await satelliteCanopy(open, A.lat, A.lon, B.lat, B.lon, D, 18, undefined, 50);
+  assert.equal(c.source, 'worldcover');
+  assert.match(c.chmError ?? '', /не загрузилась/);
 });
