@@ -25,6 +25,8 @@ export interface Canopy {
   share: number;
   mean: number;
   max: number;
+  /** Why the canopy height map was not used (WorldCover fallback). */
+  chmError?: string;
 }
 
 const R = 6378137;
@@ -145,7 +147,8 @@ export async function satelliteCanopy(open: OpenCog, lat1: number, lon1: number,
     return await canopyFromChm(open, lat1, lon1, lat2, lon2, dKm, onProgress);
   } catch (e) {
     console.warn('canopy height map failed, trying WorldCover', e);
-    return await canopyFromWorldCover(open, lat1, lon1, lat2, lon2, dKm, forestHeight, onProgress);
+    const c = await canopyFromWorldCover(open, lat1, lon1, lat2, lon2, dKm, forestHeight, onProgress);
+    return { ...c, chmError: e instanceof Error ? e.message : String(e) };
   }
 }
 
@@ -156,7 +159,8 @@ export function canopyText(c: Canopy, forestHeight: number): string {
       ? `По спутниковой карте высот деревьев (Meta и WRI, пиксель ≈1 м) лес занимает ${pct} % длины пролёта: средняя высота деревьев ${Math.round(c.mean)} м, наибольшая ${Math.round(c.max)} м.`
       : 'По спутниковой карте высот деревьев (Meta и WRI) деревьев выше 3 м на трассе нет.';
   }
-  return pct
+  const why = c.chmError ? ` Карта высот деревьев не открылась: ${c.chmError.replace(/\.$/, '')}.` : '';
+  return (pct
     ? `По спутниковой карте растительности ESA WorldCover (пиксель 10 м) лес занимает ${pct} % длины пролёта; высота принята ${forestHeight} м (карта высот деревьев была недоступна).`
-    : 'По спутниковой карте растительности ESA WorldCover леса на трассе нет.';
+    : 'По спутниковой карте растительности ESA WorldCover леса на трассе нет.') + why;
 }

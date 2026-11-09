@@ -5,7 +5,7 @@
 import type { Channel, Climate, Link, ModMode, Pol, ProfilePoint, Site } from '../types';
 import { deg, vincenty, type Geodesic } from './geo';
 import {
-  EARTH_R_KM, beamwidth, dishGain, fsl, gasAttenuation, knifeEdge, multipathP0, multipathWorstMonth, rainModel, requiredSnr, type RainModel
+  EARTH_R_KM, beamwidth, deygout, dishGain, fsl, gasAttenuation, type Obstruction, multipathP0, multipathWorstMonth, rainModel, requiredSnr, type RainModel
 } from './physics';
 import { downtime, fmt, ghz, polName } from './format';
 import { buildRecommendations, type Rec } from './recommend';
@@ -119,6 +119,8 @@ export interface ChannelResult {
   FSL: number;
   diff: number;
   diffMin: number;
+  /** Obstacles counted in the diffraction loss (Deygout), at k. */
+  diffEdges: { d: number; v: number; J: number }[];
   gasK: number;
   gas: number;
   gA: number;
@@ -244,6 +246,11 @@ export function interpolate(pts: ProfilePoint[], d: number): ProfilePoint {
   return pts[pts.length - 1];
 }
 
+/** Diffraction loss over all obstacles of the profile (Deygout, up to three edges), dB. */
+export function obstruction(P: PathModel, g: Geometry, fGHz: number): Obstruction {
+  return deygout(g.s, P.D, P.HA, P.HB, fGHz);
+}
+
 export function geometry(P: PathModel, k: number, fGHz: number): Geometry {
   const { pts, D, HA, HB } = P;
   const set = new Set(pts.map((p) => +p.d.toFixed(5)));
@@ -340,8 +347,9 @@ export function calcChannel(ctx: Ctx, ch: Channel, n: 1 | 2, polOverride?: Pol):
   const geom = geometry(path, k, fGHz);
   const geomMin = geometry(path, kMin, fGHz);
   const FSL = fsl(fGHz, D);
-  const diff = geom.crit ? Math.max(0, knifeEdge(geom.crit.H, geom.crit.F1)) : 0;
-  const diffMin = geomMin.crit ? Math.max(0, knifeEdge(geomMin.crit.H, geomMin.crit.F1)) : 0;
+  const obs = obstruction(path, geom, fGHz);
+  const diff = obs.loss;
+  const diffMin = obstruction(path, geomMin, fGHz).loss;
   const gasK = link.climate.gasDbPerKm ?? gasAttenuation(fGHz);
   const gas = gasK * D;
   const gAcalc = dishGain(link.dishA, fGHz), gBcalc = dishGain(link.dishB, fGHz);
@@ -364,7 +372,7 @@ export function calcChannel(ctx: Ctx, ch: Channel, n: 1 | 2, polOverride?: Pol):
     const h2 = at === 'A' ? prot.hA2 : prot.hB2;
     const P2 = at === 'A' ? { ...path, hA: h2, HA: path.gA0 + h2 } : { ...path, hB: h2, HB: path.gB0 + h2 };
     const g2 = geometry(P2, k, fGHz), g2min = geometry(P2, kMin, fGHz);
-    const diff2 = g2.crit ? Math.max(0, knifeEdge(g2.crit.H, g2.crit.F1)) : 0;
+    const diff2 = obstruction(P2, g2, fGHz).loss;
     const dish2 = at === 'A' ? prot.dishA2 : prot.dishB2, dishMain = at === 'A' ? link.dishA : link.dishB;
     // Same dish as the main one: take the main antenna gain (it may come from the datasheet).
     const gain2 = Math.abs(dish2 - dishMain) < 1e-6 ? (at === 'A' ? gA : gB) : dishGain(dish2, fGHz);
@@ -402,7 +410,7 @@ export function calcChannel(ctx: Ctx, ch: Channel, n: 1 | 2, polOverride?: Pol):
     for (let i = 0; i <= 32; i++) {
       const g = st.gMean + ((gHi - st.gMean) * i) / 32;
       const gm = geometry(path, kOfG(g), fGHz);
-      const dl = (gm.crit ? Math.max(0, knifeEdge(gm.crit.H, gm.crit.F1)) : 0) - diff;
+      const dl = obstruction(path, gm, fGHz).loss - diff;
       tbl.push({ g, dl: Math.max(i ? tbl[i - 1].dl : 0, dl) });
     }
     const dlAt = (g: number) => {
@@ -486,7 +494,7 @@ export function calcChannel(ctx: Ctx, ch: Channel, n: 1 | 2, polOverride?: Pol):
     else hi = m;
   }
   return {
-    n, ch, tag: 'Ст' + n, label: `${ghz(ch.freqMHz)} · ${polName(pol)}`, fGHz, pol, geom, geomMin, FSL, diff, diffMin, gasK, gas,
+    n, ch, tag: 'Ст' + n, label: `${ghz(ch.freqMHz)} · ${polName(pol)}`, fGHz, pol, geom, geomMin, FSL, diff, diffMin, diffEdges: obs.edges, gasK, gas,
     gA, gB, gAcalc, gBcalc, beamA: beamwidth(link.dishA, fGHz), beamB: beamwidth(link.dishB, fGHz), fixed, rain, modes,
     best, working, top, next, ref: best || working[0] || modes[0] || null, marginRequired: hi, refl, intf: intf && intf.list.length ? intf : null,
     avgRate: acmAverageRate(modes.map((x) => ({ rateMbps: x.rateMbps, u: x.margin > 0 ? x.u : 100 }))), rainMoments: gp ? null : rainMoments, gost: gch,
@@ -569,13 +577,13 @@ export function calculateLink(link: Link, A: Site, B: Site, neighbors: Neighbor[
       title = 'Связь будет, но норму надёжности не выдерживает ни один режим';
       sub = 'Поднимите антенны, возьмите антенны больше или режим с более низким порогом.';
     } else {
-      title = 'Сигнала не хватает: приёмник не услышит передатчик';
-      sub = r.modes.length ? 'Уровень сигнала ниже порога во всех режимах. Нужны антенны больше, выше мощность или короче пролёт.' : 'Добавьте типы модуляции ППУ и внесите скорость, мощность и порог из паспорта.';
+      title = r.diff >= 10 ? 'Связи нет: трасса закрыта препятствиями' : 'Сигнала не хватает: приёмник не услышит передатчик';
+      sub = r.modes.length ? (r.diff >= 10 ? `Рельеф и лес перекрывают луч и отнимают ${fmt(r.diff, 1)} дБ — уровень сигнала ниже порога во всех режимах. Поднимите антенны выше препятствий (см. рекомендации).` : 'Уровень сигнала ниже порога во всех режимах. Нужны антенны больше, выше мощность или короче пролёт.') : 'Добавьте типы модуляции ППУ и внесите скорость, мощность и порог из паспорта.';
     }
   } else {
     title = allOk ? `Пролёт ${nm} рабочий. Два ствола дают ${fmt(totalRate, 1)} Мбит/с в пределах нормы`
       : someOk ? `Норму выполняет только один ствол: ${fmt(totalRate, 1)} Мбит/с`
-      : anyWork ? 'Связь будет, но норму не выполняет ни один ствол' : 'Сигнала не хватает ни в одном стволе';
+      : anyWork ? 'Связь будет, но норму не выполняет ни один ствол' : results.some((r) => r.diff >= 10) ? 'Связи нет: трасса закрыта препятствиями' : 'Сигнала не хватает ни в одном стволе';
     sub = results.map((r) => `${r.tag} (${r.label}): ${r.best ? `${r.best.name}, ${fmt(r.best.rateMbps, 1)} Мбит/с, перерывы ≈ ${downtime(r.best.u)} в год` : 'норма не выполняется'}`).join('. ') + `. Допустимо ${downtime(uNorm)} в год.`;
   }
   const protN = protectionOf(link);

@@ -416,7 +416,7 @@ export function Steps({ r, link }: { r: LinkResult; link: Link }) {
         ...row('Потери в свободном пространстве', '', fmt(c.FSL, 1) + ' дБ', c.n + 'fsl'),
         ...row('Коэффициент усиления антенн A / B', c.ch.gainA == null || c.ch.gainB == null ? 'расчётный из диаметра (КИП 55 %) или по паспорту' : 'по паспорту', `${fmt(c.gA, 1)} / ${fmt(c.gB, 1)} дБ`, c.n + 'g'),
         ...row('Ширина луча A / B', '', `${fmt(c.beamA, 1)}° / ${fmt(c.beamB, 1)}°`, c.n + 'bw'),
-        ...row('Потери на препятствии', `в плохую погоду ${fmt(c.diffMin, 1)} дБ`, fmt(c.diff, 1) + ' дБ', c.n + 'df'),
+        ...row('Потери на препятствиях', `${c.diffEdges.length ? `препятствий учтено: ${c.diffEdges.length} (метод Дейгу, МСЭ-R P.526); ` : ''}в плохую погоду ${fmt(c.diffMin, 1)} дБ`, fmt(c.diff, 1) + ' дБ', c.n + 'df'),
         ...(c.ch.thrCorrDb ? row('Корректировка порогов', 'из паспорта ППУ, ко всем режимам', (c.ch.thrCorrDb > 0 ? '+' : '') + fmt(c.ch.thrCorrDb, 1) + ' дБ', c.n + 'thc') : []),
         ...row('Затухание в газах', `${fmt(c.gasK, 3)} дБ/км`, fmt(c.gas, 2) + ' дБ', c.n + 'gas'),
         ...(c.refl ? [

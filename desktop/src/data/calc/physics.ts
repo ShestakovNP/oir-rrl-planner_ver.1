@@ -7,8 +7,47 @@ export const fsl = (fGHz: number, dKm: number) => 92.45 + 20 * Math.log10(fGHz) 
 
 /** Single knife-edge diffraction loss, dB. h = clearance (negative = obstruction), F1 = first Fresnel radius. */
 export function knifeEdge(h: number, F1: number): number {
-  const v = (-Math.SQRT2 * h) / F1;
+  return knifeJ((-Math.SQRT2 * h) / F1);
+}
+/** Knife-edge loss J(v), dB (ITU-R P.526, formula 31). */
+export function knifeJ(v: number): number {
   return v > -0.78 ? 6.9 + 20 * Math.log10(Math.sqrt((v - 0.1) ** 2 + 1) + v - 0.1) : 0;
+}
+
+export interface Edge { d: number; v: number; J: number }
+export interface Obstruction { loss: number; edges: Edge[] }
+
+/**
+ * Diffraction loss over the whole profile, dB — Deygout method with up to three edges (ITU-R P.526):
+ * L = J(vp) + T·[J(vt) + J(vr)], T = 1 − exp(−J(vp)/6). The empirical constant C of P.526 is not added:
+ * it switches on in a step as soon as a minor second edge appears and adds ≈1 dB on semi-open paths that
+ * the reference reports compute with one edge; on closed paths the loss stays far beyond any margin.
+ * The principal edge is the point with the largest v on the whole path; then the largest v is found on each
+ * side between the antenna and the principal edge. A single knife-edge at the worst point is not enough:
+ * a long path under forest is blocked by many trees, not one.
+ * pts: distance d, km, and obstacle top, m (with Earth bulge); yA, yB — antenna heights, m; margin — part of
+ * the path at each end not searched (the site itself), km.
+ */
+export function deygout(pts: { d: number; top: number }[], D: number, yA: number, yB: number, fGHz: number, margin = D * 0.005): Obstruction {
+  const best = (d1: number, y1: number, d2: number, y2: number): Edge & { top: number } | null => {
+    let e: (Edge & { top: number }) | null = null;
+    for (const p of pts) {
+      const a = p.d - d1, b = d2 - p.d;
+      if (a <= margin || b <= margin) continue;
+      const F1 = 17.32 * Math.sqrt((a * b) / (fGHz * (a + b)));
+      const h = p.top - (y1 + ((y2 - y1) * a) / (a + b));
+      const v = (Math.SQRT2 * h) / F1;
+      if (!e || v > e.v) e = { d: p.d, v, J: knifeJ(v), top: p.top };
+    }
+    return e;
+  };
+  const p = best(0, yA, D, yB);
+  if (!p || p.J <= 0) return { loss: 0, edges: [] };
+  const t = best(0, yA, p.d, p.top), r = best(p.d, p.top, D, yB);
+  const subs = [t, r].filter((e): e is Edge & { top: number } => !!e && e.J > 0);
+  const T = 1 - Math.exp(-p.J / 6);
+  const loss = p.J + T * subs.reduce((s, e) => s + e.J, 0);
+  return { loss, edges: [p, ...subs].sort((x, y) => x.d - y.d).map(({ d, v, J }) => ({ d, v, J })) };
 }
 
 /** Parabolic dish gain with 55 % aperture efficiency, dBi. */

@@ -100,7 +100,7 @@ export function buildRecommendations(r: LinkResult): Rec[] {
       recs.push({
         level: c.best ? 'info' : 'bad',
         title: c.best ? `${p0}как получить ${c.next.name}, ${fmt(c.next.rateMbps, 1)} Мбит/с` : `${p0}норма не выполняется ни на одной скорости`,
-        text: `${c.best ? 'Не' : 'Даже на ' + c.next.name + ' не'} хватает **${fmt(need, 1)} дБ** запаса. ${gain(need)}`
+        text: `${c.best ? 'Не' : 'Даже на ' + c.next.name + ' не'} хватает **${fmt(need, 1)} дБ** запаса. ` + (c.diff >= Math.min(6, need) ? `Главная причина — препятствия на трассе: они отнимают **${fmt(c.diff, 1)} дБ**. Сначала поднимите антенны выше препятствий — эти потери уйдут; разнесённый приём и большие антенны закрытую трассу не спасут.` : gain(need))
       });
       if (!mpSaid && c.next.mpYear > c.next.rainYear * 3 && c.fGHz <= 13) {
         mpSaid = true;

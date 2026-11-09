@@ -317,7 +317,7 @@ function linkSection(L: Layout, it: ReportItem, project: Project | null, date: s
     steps.push(row([{ t: r.multi ? `Ствол ${c.n} · ${c.label}` : c.label, bold: true, color: C.accent }, '', ''], { bg: C.accentSoft }));
     steps.push(row(['Потери в свободном пространстве', { t: 'ослабление из-за расстояния', color: C.muted }, { t: fmt(c.FSL, 1) + ' дБ', bold: true }]));
     steps.push(row(['Коэффициент усиления антенн A / B', { t: c.ch.gainA == null || c.ch.gainB == null ? 'расчётный из диаметра или по паспорту' : 'по паспорту', color: C.muted }, { t: `${fmt(c.gA, 1)} / ${fmt(c.gB, 1)} дБ`, bold: true }]));
-    steps.push(row(['Потери на препятствии', { t: `при k = ${fmt(r.k, 2)}; в плохую погоду ${fmt(c.diffMin, 1)} дБ`, color: C.muted }, { t: fmt(c.diff, 1) + ' дБ', bold: true }]));
+    steps.push(row(['Потери на препятствиях', { t: `при k = ${fmt(r.k, 2)}${c.diffEdges.length ? `, препятствий учтено: ${c.diffEdges.length} (метод Дейгу)` : ''}; в плохую погоду ${fmt(c.diffMin, 1)} дБ`, color: C.muted }, { t: fmt(c.diff, 1) + ' дБ', bold: true }]));
     steps.push(row(['Затухание в газах', { t: `${fmt(c.gasK, 3)} дБ/км`, color: C.muted }, { t: fmt(c.gas, 2) + ' дБ', bold: true }]));
     if (c.refl) {
       const w = c.refl;
