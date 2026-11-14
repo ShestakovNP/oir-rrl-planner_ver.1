@@ -264,7 +264,7 @@ export function geometry(P: PathModel, k: number, fGHz: number): Geometry {
     const F1 = d > 0 && d < D ? 17.32 * Math.sqrt((d * (D - d)) / (fGHz * D)) : 0;
     const top = q.g + q.c + bulge;
     const o: Sample = { d, g: q.g + bulge, top, los, F1, H: los - top, t: q.t };
-    if (d > D * 0.005 && d < D * 0.995 && F1 > 0) {
+    if (d > Math.min(D * 0.005, 0.05) && d < D - Math.min(D * 0.005, 0.05) && F1 > 0) {
       const rel = o.H / F1;
       if (!crit || rel < crit.rel) crit = { ...o, rel };
     }

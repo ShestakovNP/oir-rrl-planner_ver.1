@@ -26,9 +26,9 @@ export interface Obstruction { loss: number; edges: Edge[] }
  * side between the antenna and the principal edge. A single knife-edge at the worst point is not enough:
  * a long path under forest is blocked by many trees, not one.
  * pts: distance d, km, and obstacle top, m (with Earth bulge); yA, yB — antenna heights, m; margin — part of
- * the path at each end not searched (the site itself), km.
+ * the path at each end not searched (the site itself: 0,5 % of the path, but not more than 50 m), km.
  */
-export function deygout(pts: { d: number; top: number }[], D: number, yA: number, yB: number, fGHz: number, margin = D * 0.005): Obstruction {
+export function deygout(pts: { d: number; top: number }[], D: number, yA: number, yB: number, fGHz: number, margin = Math.min(D * 0.005, 0.05)): Obstruction {
   const best = (d1: number, y1: number, d2: number, y2: number): Edge & { top: number } | null => {
     let e: (Edge & { top: number }) | null = null;
     for (const p of pts) {
