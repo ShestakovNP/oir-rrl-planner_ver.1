@@ -226,10 +226,11 @@ export function buildRecommendations(r: LinkResult): Rec[] {
   }
 
   if (r.geo) {
-    const lv = r.channels.filter((c) => c.ref).map((c) => `**${fmt(c.ref!.prx, 0)} дБм**${r.multi ? ' в ' + c.tag : ''}`).join(', ');
+    // Over an obstacle the level depends on refraction: give the range down to bad weather (k = kMin).
+    const lv = r.channels.filter((c) => c.ref).map((c) => `**${fmt(c.ref!.prx, 0)} дБм**${c.diffMin - c.diff >= 1 ? ` (при плохой рефракции до ${fmt(c.ref!.prx - (c.diffMin - c.diff), 0)} дБм)` : ''}${r.multi ? ' в ' + c.tag : ''}`).join(', ');
     recs.push({
       level: 'info', title: 'Как навести антенны',
-      text: `На «${nameA}»: азимут **${fmt(r.geo.az1, 1)}°**, угол места ${fmt(r.tiltA, 2)}°. На «${nameB}»: азимут **${fmt(r.geo.az2, 1)}°**, угол места ${fmt(r.tiltB, 2)}°. Сначала наведите грубо по компасу или ориентирам, затем точно по уровню сигнала на приёмнике${lv ? ': ожидается около ' + lv : ''}. Если уровень ниже на 3 дБ и больше, антенна, скорее всего, поймала боковой лепесток.`
+      text: `На «${nameA}»: азимут **${fmt(r.geo.az1, 1)}°**, угол места ${fmt(r.tiltA, 2)}°. На «${nameB}»: азимут **${fmt(r.geo.az2, 1)}°**, угол места ${fmt(r.tiltB, 2)}°. Сначала наведите грубо по компасу или ориентирам, затем точно по уровню сигнала на приёмнике${lv ? ': ожидается около ' + lv : ''}. Если уровень ниже ожидаемого на 3 дБ и больше, антенна, скорее всего, поймала боковой лепесток. Если сигнал слабее ожидаемого на 15–30 дБ при любом положении антенн, проверьте поляризацию на обоих концах (разная даёт −25…−30 дБ), фактическую мощность передатчика (ATPC, ручное снижение) и препятствия на трассе при обследовании.`
     });
   }
   r.warnings.forEach((w) => recs.push({ level: 'warn', title: 'Проверьте исходные данные', text: w }));
