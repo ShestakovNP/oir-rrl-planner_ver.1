@@ -5,7 +5,7 @@
 import type { Channel, Climate, Link, ModMode, Pol, ProfilePoint, Site } from '../types';
 import { deg, vincenty, type Geodesic } from './geo';
 import {
-  EARTH_R_KM, beamwidth, deygout, dishGain, fsl, gasAttenuation, type Obstruction, multipathP0, multipathWorstMonth, rainModel, requiredSnr, type RainModel
+  EARTH_R_KM, beamwidth, cylinders, dishGain, fsl, gasAttenuation, type Obstruction, multipathP0, multipathWorstMonth, rainModel, requiredSnr, type RainModel
 } from './physics';
 import { downtime, fmt, ghz, polName } from './format';
 import { buildRecommendations, type Rec } from './recommend';
@@ -248,7 +248,7 @@ export function interpolate(pts: ProfilePoint[], d: number): ProfilePoint {
 
 /** Diffraction loss over all obstacles of the profile (Deygout, up to three edges), dB. */
 export function obstruction(P: PathModel, g: Geometry, fGHz: number): Obstruction {
-  return deygout(g.s, P.D, P.HA, P.HB, fGHz);
+  return cylinders(g.s, P.D, P.HA, P.HB, fGHz);
 }
 
 export function geometry(P: PathModel, k: number, fGHz: number): Geometry {

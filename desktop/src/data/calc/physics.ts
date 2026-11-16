@@ -50,6 +50,105 @@ export function deygout(pts: { d: number; top: number }[], D: number, yA: number
   return { loss, edges: [p, ...subs].sort((x, y) => x.d - y.d).map(({ d, v, J }) => ({ d, v, J })) };
 }
 
+/** Extra loss of a rounded obstacle, dB (ITU-R P.526, single rounded obstacle). */
+export function roundedT(R: number, d1: number, d2: number, h: number, lambda: number): number {
+  if (!(R > 0) || !(d1 > 0) || !(d2 > 0)) return 0;
+  const q = Math.PI * R / lambda;
+  const m = (R * (d1 + d2) / (d1 * d2)) / Math.cbrt(q);
+  const n = (h * Math.pow(q, 2 / 3)) / R;
+  const base = 7.2 * Math.sqrt(m) + 3.6 * Math.pow(m, 1.5) - 0.8 * m * m;
+  const T = m * n <= 4 ? base - (2 - 12.5 * n) * m : -6 - 20 * Math.log10(m * n) + base - (2 - 17 * n) * m;
+  return Math.max(0, T);
+}
+
+export interface Cylinder extends Edge { /** start and end of the obstruction, km; radius, m; extra loss of rounding, dB */ from: number; to: number; R: number; T: number }
+export interface Cylinders extends Obstruction { cylinders: Cylinder[] }
+
+/**
+ * Diffraction loss over the profile by ITU-R P.526 «multiple isolated cylinders» (the method of the
+ * reference planning tools). The profile is spanned by a stretched string from antenna to antenna; string
+ * points on neighbouring profile samples (≤ 250 m apart) form one obstruction, which is modelled as a
+ * cylinder: its vertex is where the rays from the previous and to the next string point cross, its radius
+ * follows from the change of slope over the obstruction, smoothed by [1 − exp(−4ν)]³ for marginal ones.
+ * Loss of each cylinder = J(ν) + T(m,n); line-of-sight sections between cylinders add knife-edge loss
+ * at their smallest normalised clearance (Attachment 2); the correction −20·lg C_N accounts for spreading
+ * between successive cylinders. If the string goes straight from antenna to antenna (no obstruction of
+ * the line of sight), only the section loss remains — the familiar knife-edge at the worst point.
+ * pts: d, km, and top, m, with Earth bulge (flat frame); yA, yB — antenna heights, m.
+ */
+export function cylinders(pts: { d: number; top: number }[], D: number, yA: number, yB: number, fGHz: number, margin = Math.min(D * 0.005, 0.05)): Cylinders {
+  const lambda = 0.299792458 / fGHz;
+  const P = [{ d: 0, top: yA }, ...pts.filter((p) => p.d > margin && p.d < D - margin), { d: D, top: yB }].map((p) => ({ x: p.d * 1000, y: p.top }));
+  const last = P.length - 1;
+  // stretched string
+  const str: number[] = [0];
+  for (let s = 0; s < last;) {
+    let best = s + 1, bs = -Infinity;
+    for (let i = s + 1; i <= last; i++) { const e = (P[i].y - P[s].y) / (P[i].x - P[s].x); if (e >= bs) { bs = e; best = i; } }
+    str.push(best); s = best;
+  }
+  // group string points on neighbouring samples into obstructions [x, y] (indices into P)
+  const obs: [number, number][] = [];
+  for (let k = 1; k < str.length - 1; k++) {
+    const i = str[k], prev = obs[obs.length - 1];
+    if (prev && prev[1] === str[k - 1] && i === prev[1] + 1 && P[i].x - P[prev[1]].x <= 250) prev[1] = i; else obs.push([i, i]);
+  }
+  // knife-edge loss of a line-of-sight section u..v at its smallest normalised clearance (Attachment 2)
+  // points on the slopes falling away from the section ends are skipped (they are the flanks of the
+  // obstructions at u and v, already counted there); if nothing is left, the section adds nothing
+  const section = (u: number, v: number): number => {
+    let p = u + 1, q = v - 1;
+    while (p < v - 1 && P[p].y > P[p + 1].y) p++;
+    while (q > u + 1 && P[q].y > P[q - 1].y) q--;
+    if (p >= q) return 0;
+    let cf = Infinity;
+    for (let i = p; i <= q; i++) {
+      const du = P[i].x - P[u].x, dv = P[v].x - P[i].x, duv = P[v].x - P[u].x;
+      const F1 = Math.sqrt(lambda * du * dv / duv);
+      const hr = (P[u].y * dv + P[v].y * du) / duv;
+      cf = Math.min(cf, (hr - P[i].y) / F1);
+    }
+    return Number.isFinite(cf) ? knifeJ(-cf * Math.SQRT2) : 0;
+  };
+  if (!obs.length) {
+    const L = section(0, last);
+    let worst = 0, wcf = Infinity;
+    for (let i = 1; i < last; i++) { const du = P[i].x, dv = P[last].x - P[i].x; const cf = ((P[0].y * dv + P[last].y * du) / P[last].x - P[i].y) / Math.sqrt(lambda * du * dv / P[last].x); if (cf < wcf) { wcf = cf; worst = i; } }
+    return { loss: L, edges: L > 0 ? [{ d: P[worst].x / 1000, v: -wcf * Math.SQRT2, J: L }] : [], cylinders: [] };
+  }
+  const cyl: Cylinder[] = [];
+  const s1: number[] = [], s2: number[] = [];
+  let loss = 0;
+  obs.forEach(([x, y], i) => {
+    const w = i === 0 ? 0 : obs[i - 1][1], z = i === obs.length - 1 ? last : obs[i + 1][0];
+    const aw = (P[x].y - P[w].y) / (P[x].x - P[w].x), az = (P[y].y - P[z].y) / (P[z].x - P[y].x);
+    const theta = aw + az;
+    // vertex: crossing of the ray w→x and the ray z→y
+    const dwv = x === y ? P[x].x - P[w].x : Math.min(P[z].x - P[w].x, Math.max(0, (P[z].y - P[w].y + az * (P[z].x - P[w].x)) / theta));
+    const dwz = P[z].x - P[w].x, dvz = dwz - dwv;
+    const nu = theta * Math.sqrt((2 * dwv * dvz) / (lambda * dwz));
+    const h = (theta * dwv * dvz) / dwz;
+    // radius from the change of slope p→x … y→q over the obstruction
+    const p = Math.max(0, x - 1), q = Math.min(last, y + 1);
+    const t = (P[x].y - P[p].y) / Math.max(1e-9, P[x].x - P[p].x) + (P[y].y - P[q].y) / Math.max(1e-9, P[q].x - P[y].x);
+    const R = t > 0 ? ((P[q].x - P[p].x) / t) * Math.pow(1 - Math.exp(-4 * Math.max(0, nu)), 3) : 0;
+    const J = knifeJ(nu), T = J > 0 ? roundedT(R, dwv, dvz, h, lambda) : 0;
+    loss += J + T;
+    s1.push(dwv); s2.push(dvz);
+    cyl.push({ d: (P[w].x + dwv) / 1000, v: nu, J: J + T, from: P[x].x / 1000, to: P[y].x / 1000, R, T });
+  });
+  loss += section(0, obs[0][0]);
+  obs.forEach(([, y], i) => { loss += section(y, i === obs.length - 1 ? last : obs[i + 1][0]); });
+  // spreading correction between successive cylinders
+  const N = obs.length;
+  if (N > 1) {
+    let Pa = s1[0] * (s1[0] + s2.reduce((a, b) => a + b, 0)), Pb = s1[0] * s2[N - 1];
+    for (let i = 0; i < N; i++) { Pa *= s2[i]; Pb *= s1[i] + s2[i]; }
+    loss -= 20 * Math.log10(Math.sqrt(Pa / Pb));
+  }
+  return { loss: Math.max(0, loss), edges: cyl.filter((c) => c.J > 0).map(({ d, v, J }) => ({ d, v, J })), cylinders: cyl };
+}
+
 /** Parabolic dish gain with 55 % aperture efficiency, dBi. */
 export const dishGain = (dM: number, fGHz: number) =>
   dM > 0 && fGHz > 0 ? 10 * Math.log10(0.55 * Math.pow((Math.PI * dM * fGHz) / 0.299792458, 2)) : NaN;
