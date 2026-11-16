@@ -1,6 +1,6 @@
 /** Plain-language recommendations derived from a LinkResult. Texts use **bold** markers. */
 import { geometry, interpolate, type LinkResult, type Level } from './link';
-import { rainModel } from './physics';
+import { pointingLoss, pointingTolerance, rainModel } from './physics';
 import { fresnelWater } from './water';
 import { downtime, fmt, ghz, pct } from './format';
 
@@ -231,6 +231,17 @@ export function buildRecommendations(r: LinkResult): Rec[] {
     recs.push({
       level: 'info', title: 'Как навести антенны',
       text: `На «${nameA}»: азимут **${fmt(r.geo.az1, 1)}°**, угол места ${fmt(r.tiltA, 2)}°. На «${nameB}»: азимут **${fmt(r.geo.az2, 1)}°**, угол места ${fmt(r.tiltB, 2)}°. Сначала наведите грубо по компасу или ориентирам, затем точно по уровню сигнала на приёмнике${lv ? ': ожидается около ' + lv : ''}. Если уровень ниже ожидаемого на 3 дБ и больше, антенна, скорее всего, поймала боковой лепесток. Если сигнал слабее ожидаемого на 15–30 дБ при любом положении антенн, проверьте поляризацию на обоих концах (разная даёт −25…−30 дБ), фактическую мощность передатчика (ATPC, ручное снижение) и препятствия на трассе при обследовании.`
+    });
+  }
+  // Pointing accuracy: the narrowest beam of each end (highest frequency) decides how precise the mount must be.
+  const beams = r.channels.filter((c) => Number.isFinite(c.beamA) && Number.isFinite(c.beamB));
+  if (beams.length) {
+    const bA = Math.min(...beams.map((c) => c.beamA)), bB = Math.min(...beams.map((c) => c.beamB));
+    const one = (b: number) => `ширина луча **${fmt(b, 2)}°**; ошибка наведения стоит: ${[0.5, 1, 1.5].map((e) => `${fmt(e, 1)}° — ${fmt(Math.min(20, pointingLoss(e, b)), 1)} дБ`).join(', ')}; чтобы терять не больше 1 дБ, ошибка должна быть не более **±${fmt(pointingTolerance(1, b), 2)}°**`;
+    const ends = Math.abs(bA - bB) < 0.005 ? `На обоих концах ${one(bA)}.` : `На «${nameA}» ${one(bA)}. На «${nameB}» ${one(bB)}.`;
+    recs.push({
+      level: 'info', title: 'Точность наведения',
+      text: `${ends} Потери складываются на обоих концах, по азимуту и по углу места. Ошибку в 1–1,5° на каждом конце легко не заметить, а она отнимает 10–20 дБ. Если конструкция не позволяет подстроить антенну точнее, нужен кронштейн с винтами точной юстировки по азимуту и углу места.`
     });
   }
   r.warnings.forEach((w) => recs.push({ level: 'warn', title: 'Проверьте исходные данные', text: w }));

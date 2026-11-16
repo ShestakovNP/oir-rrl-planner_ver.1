@@ -40,3 +40,11 @@ test('Препятствие ниже луча, но в зоне Френеля 
   assert.equal(c.cylinders.length, 0);
   assert.ok(c.loss > 0 && c.loss < 6, `${c.loss}`);
 });
+
+test('Точность наведения: антенна 1,8 м на 7 ГГц', async () => {
+  const { beamwidth, pointingLoss, pointingTolerance } = await import('../src/data/calc/physics');
+  const b = beamwidth(1.8, 7);
+  assert.ok(Math.abs(b - 1.67) < 0.01, `${b}`);
+  assert.ok(Math.abs(pointingLoss(1, b) - 4.3) < 0.1);
+  assert.ok(Math.abs(pointingLoss(pointingTolerance(1, b), b) - 1) < 1e-9);
+});

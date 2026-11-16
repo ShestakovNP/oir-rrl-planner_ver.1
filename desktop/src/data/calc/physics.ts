@@ -156,6 +156,11 @@ export const dishGain = (dM: number, fGHz: number) =>
 /** Half-power beamwidth, degrees. */
 export const beamwidth = (dM: number, fGHz: number) => (dM > 0 && fGHz > 0 ? (70 * 0.299792458) / fGHz / dM : NaN);
 
+/** Loss of gain for a pointing error, dB: main lobe ≈ 12·(error / half-power beamwidth)² (ITU-R F.1245-like). */
+export const pointingLoss = (errDeg: number, beamDeg: number) => 12 * (errDeg / beamDeg) ** 2;
+/** Pointing error giving the stated loss, degrees. */
+export const pointingTolerance = (lossDb: number, beamDeg: number) => beamDeg * Math.sqrt(lossDb / 12);
+
 /* ---------- gases, ITU-R P.676, standard atmosphere (7.5 g/m³, 15 °C, sea level), dB/km ---------- */
 const GAS: [number, number][] = [
   [1, 0.0054], [5, 0.0085], [8, 0.0105], [10, 0.0125], [13, 0.022], [15, 0.035], [18, 0.075], [20, 0.12],
